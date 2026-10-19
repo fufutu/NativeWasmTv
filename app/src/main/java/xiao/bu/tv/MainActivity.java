@@ -14043,23 +14043,48 @@ public final class MainActivity extends Activity {
     @Override
     protected void onStop() {
         setWindowContentActive(false);
+        
+        // 优化点 1：切后台/息屏时，确保播放器存在、已准备好且正在播放，才进行暂停
+        if (player != null && prepared) {
+            try {
+                if (player.isPlaying()) {
+                    player.pause();
+                }
+            } catch (Exception ignored) {}
+        }
+        
         super.onStop();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (Build.VERSION.SDK_INT >= 21) {
+        if (Build.VERSION.SDK_INT >= 21) { 
             if (channelMediaSession == null) {
                 channelMediaSession = new ChannelMediaSession(this,
                         new Runnable() { @Override public void run() { handleChannelMediaKey(-1); } },
-                        new Runnable() { @Override public void run() { handleChannelMediaKey(1); } });
-            }
-        }
+                        new Runnable() { @Override public void run() { handleChannelMediaKey(1); } }); 
+            }     
+        }     
+        
         if (hasActivePlayer()) {
             requestPlaybackAudioFocus();
             applyPlaybackMuteState();
-        }
+            
+            // 优化点 2：回到前台/唤醒时，确保播放器已准备好但处于暂停状态，才恢复播放
+            try {
+                if (player != null && prepared && !player.isPlaying()) {
+                    player.start();
+                }
+            } catch (Exception ignored) {}
+            
+        } else if (activePlayerChannel != null && activePlayerStreamUrl != null) {
+            // 优化点 3：兜底保护（如果实例被回收，重新拉起当前频道）
+            try {
+                startResolvedPlayer(activePlayerChannel, activePlayerStreamUrl);
+            } catch (Exception ignored) {}
+        }     
+        
         setWindowContentActive(true);
         refreshManagementAddress();
         applySystemUiVisibility();
