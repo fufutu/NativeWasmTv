@@ -14883,6 +14883,8 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     protected void onStop() {
         setWindowContentActive(false);
         super.onStop();
+
+        reconcilePlaybackVisibility();
     }
 
     @Override
@@ -14903,6 +14905,8 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         setWindowContentActive(true);
         refreshManagementAddress();
         applySystemUiVisibility();
+
+        reconcilePlaybackVisibility();
     }
 
     private void setWindowContentActive(boolean active) {
