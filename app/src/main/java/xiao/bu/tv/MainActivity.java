@@ -8404,6 +8404,13 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         try {
             IjkMediaPlayer.loadLibrariesOnce(null);
             nextPlayer = new IjkMediaPlayer();
+            // 使用你熟悉的 EBU R128 响度标准滤镜
+nextPlayer.setOption(
+    IjkMediaPlayer.OPT_CATEGORY_PLAYER, 
+    "af", 
+    "loudnorm=I=-14:LRA=10:TP=-1"
+);
+
         } catch (LinkageError error) {
             // Wrong ABI, damaged ELF or missing JNI symbols must use the same
             // error/return-to-web path as a failed source, including Surface callbacks.

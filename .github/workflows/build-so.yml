@@ -3,7 +3,7 @@ name: Build IjkPlayer FFmpeg SO From Scratch
 on:
   push:
     branches:
-      - new-branch-name
+      - master33
   workflow_dispatch:
 
 jobs:
