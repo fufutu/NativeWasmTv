@@ -3,8 +3,7 @@ name: Build IjkPlayer FFmpeg SO From Scratch
 on:
   push:
     branches:
-      - master33
-#      - new-branch-name
+      - new-branch-name
   workflow_dispatch:
 
 jobs:
@@ -28,7 +27,7 @@ jobs:
         cd /tmp
         wget -q https://dl.google.com/android/repository/android-ndk-r14b-linux-x86_64.zip
         unzip -q android-ndk-r14b-linux-x86_64.zip
-        # 同时覆盖 ANDROID_NDK 和 ANDROID_NDK_ROOT，防止被 GitHub  runner 自带的 NDK 干扰
+        # 同时覆盖 ANDROID_NDK 和 ANDROID_NDK_ROOT，防止被 GitHub runner 自带的 NDK 干扰
         echo "ANDROID_NDK=/tmp/android-ndk-r14b" >> $GITHUB_ENV
         echo "ANDROID_NDK_ROOT=/tmp/android-ndk-r14b" >> $GITHUB_ENV
 
@@ -37,17 +36,17 @@ jobs:
         cd ijkplayer-src
         ./init-android.sh
 
-    - name: 5. 开启 avfilter 与 dynaudnorm 音量均衡滤镜
+    - name: 5. 深度优化：开启 NEON 向量加速、汇编与 dynaudnorm 动态音量滤镜
       run: |
         cd ijkplayer-src
         # 1. 暴力清除默认的 --disable-filters 限制
         find . -name "module.sh" -exec sed -i 's/--disable-filters//g' {} +
         
-        # 2. 注入 avfilter 和 dynaudnorm 滤镜
-        echo 'export COMMON_FF_CFG_FLAGS="$COMMON_FF_CFG_FLAGS --enable-avfilter --enable-filter=dynaudnorm"' >> config/module.sh
+        # 2. 注入硬件加速标志（--enable-asm --enable-neon）以及轻量级实时音量平衡滤镜 dynaudnorm
+        OPTIMIZE_CFG='export COMMON_FF_CFG_FLAGS="$COMMON_FF_CFG_FLAGS --enable-avfilter --enable-filter=dynaudnorm --enable-asm --enable-neon"'
+        echo "$OPTIMIZE_CFG" >> config/module.sh
         if [ -f "android/contrib/config/module.sh" ]; then
-          #echo 'export COMMON_FF_CFG_FLAGS="$COMMON_FF_CFG_FLAGS --enable-avfilter --enable-filter=dynaudnorm"' >> android/contrib/config/module.sh
-          echo 'export COMMON_FF_CFG_FLAGS="$COMMON_FF_CFG_FLAGS --enable-avfilter --enable-filter=dynaudnorm --enable-filter=loudnorm"' >> config/module.sh
+          echo "$OPTIMIZE_CFG" >> android/contrib/config/module.sh
         fi
 
     - name: 6. 编译 armv7a 架构的 FFmpeg 和 IjkPlayer so 库
@@ -59,10 +58,10 @@ jobs:
         cd ..
         ./compile-ijk.sh armv7a
 
-    - name: 7. 上传编译好的全套 so 库产物
+    - name: 7. 上传编译好的全套 so 库产物（确保版本同源）
       uses: actions/upload-artifact@v4
       with:
-        name: ijkplayer-all-so-armeabi-v7a
+        name: ijkplayer-optimized-so-armeabi-v7a
         path: |
           ijkplayer-src/android/ijkplayer/ijkplayer-armv7a/src/main/libs/armeabi-v7a/*.so
 
