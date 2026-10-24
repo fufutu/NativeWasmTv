@@ -8406,6 +8406,12 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             nextPlayer = new IjkMediaPlayer();
             // 使用你熟悉的 EBU R128 响度标准滤镜
 
+// 改用对实时流更友好的 dynaudnorm，或者直接去掉 af 参数
+nextPlayer.setOption(
+    IjkMediaPlayer.OPT_CATEGORY_PLAYER, 
+    "af", 
+    "dynaudnorm"
+);
 
         } catch (LinkageError error) {
             // Wrong ABI, damaged ELF or missing JNI symbols must use the same
