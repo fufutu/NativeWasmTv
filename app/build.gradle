@@ -50,7 +50,7 @@ android {
 
     defaultConfig {
         applicationId project.hasProperty('applicationIdOverride')
-                ? project.property('applicationIdOverride').toString() : 'xiao.bu.tv'
+                ? project.property('applicationIdOverride').toString() : 'xiao.bu.tv.test'
         minSdkVersion 14
         // One 320x180 fallback for API 14-20; API 21+ keeps the original vector.
         vectorDrawables.generatedDensities = ['xhdpi']
