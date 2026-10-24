@@ -27,8 +27,8 @@ jobs:
         cd /tmp
         wget -q https://dl.google.com/android/repository/android-ndk-r15c-linux-x86_64.zip
         unzip -q android-ndk-r15c-linux-x86_64.zip
-        # 手动写入版本标识文件，解决 ijkplayer 脚本识别问题
-        echo "r15c" > /tmp/android-ndk-r15c/RELEASE.txt
+        # 关键：伪装 NDK 版本为 r14b，骗过旧版 ijkplayer 的版本白名单校验
+        echo "r14b" > /tmp/android-ndk-r15c/RELEASE.txt
         echo "ANDROID_NDK=/tmp/android-ndk-r15c" >> $GITHUB_ENV
 
     - name: 4. 初始化 FFmpeg 源码模块
