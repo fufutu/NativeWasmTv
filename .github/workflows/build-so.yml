@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - master33
-      - new-branch-name
+#      - new-branch-name
   workflow_dispatch:
 
 jobs:

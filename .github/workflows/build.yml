@@ -3,8 +3,8 @@ name: Build Android APK
 on:
   push:
     branches:
-#      - new-branch-name
-       - masterddd
+      - new-branch-name
+#       - masterddd
   pull_request:
     branches: [ main, master ]
 jobs:
