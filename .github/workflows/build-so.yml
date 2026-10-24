@@ -1,0 +1,56 @@
+name: Build Custom FFmpeg SO (armv7a)
+
+on:
+  workflow_dispatch: # 支持在 GitHub 网页上手动点击触发编译
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v2
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y yasm make git wget unzip
+
+      - name: Setup Android NDK (r15c)
+        run: |
+          cd /tmp
+          wget -q https://dl.google.com/android/repository/android-ndk-r15c-linux-x86_64.zip
+          unzip -q android-ndk-r15c-linux-x86_64.zip
+          echo "ANDROID_NDK=/tmp/android-ndk-r15c" >> $GITHUB_ENV
+
+      - name: Enable AVFilter and Dynaudnorm in Code
+        run: |
+          # 1. 强制开启 ijkplayer 底层的 avfilter 宏定义
+          find . -name "config.h" -exec sed -i 's/#define CONFIG_AVFILTER 0/#define CONFIG_AVFILTER 1/g' {} +
+          
+          # 2. 在 FFmpeg 编译配置中追加 avfilter 和 dynaudnorm 动态音量均衡滤镜
+          if [ -f "config/module.sh" ]; then
+            sed -i 's/COMMON_FF_CFG_FLAGS="/COMMON_FF_CFG_FLAGS="--enable-avfilter --enable-filter=dynaudnorm /g' config/module.sh
+          fi
+
+      - name: Compile FFmpeg and IjkPlayer (armv7a)
+        run: |
+          export PATH=$ANDROID_NDK:$PATH
+          
+          # 初始化并编译 armv7a 架构的 FFmpeg
+          cd android/contrib
+          ./compile-ffmpeg.sh clean
+          ./compile-ffmpeg.sh armv7a
+          
+          # 编译 ijkplayer 上层模块
+          cd ..
+          ./compile-ijk.sh armv7a
+
+      - name: Upload Compiled SO Artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: libijkffmpeg-armeabi-v7a
+          path: |
+            android/ijkplayer/ijkplayer-armv7a/src/main/libs/armeabi-v7a/libijkffmpeg.so
+            **/libs/armeabi-v7a/libijkffmpeg.so
+
+
