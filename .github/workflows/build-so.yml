@@ -39,9 +39,13 @@ jobs:
     - name: 5. 开启 avfilter 与 dynaudnorm 音量均衡滤镜
       run: |
         cd ijkplayer-src
-        find . -name "config.h" -exec sed -i 's/#define CONFIG_AVFILTER 0/#define CONFIG_AVFILTER 1/g' {} +
-        if [ -f "config/module.sh" ]; then
-          sed -i 's/COMMON_FF_CFG_FLAGS="/COMMON_FF_CFG_FLAGS="--enable-avfilter --enable-filter=dynaudnorm /g' config/module.sh
+        # 1. 暴力清除默认的 --disable-filters 限制
+        find . -name "module.sh" -exec sed -i 's/--disable-filters//g' {} +
+        
+        # 2. 注入 avfilter 和 dynaudnorm 滤镜
+        echo 'export COMMON_FF_CFG_FLAGS="$COMMON_FF_CFG_FLAGS --enable-avfilter --enable-filter=dynaudnorm"' >> config/module.sh
+        if [ -f "android/contrib/config/module.sh" ]; then
+          echo 'export COMMON_FF_CFG_FLAGS="$COMMON_FF_CFG_FLAGS --enable-avfilter --enable-filter=dynaudnorm"' >> android/contrib/config/module.sh
         fi
 
     - name: 6. 编译 armv7a 架构的 FFmpeg 和 IjkPlayer so 库
