@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master33
+      - new-branch-name
   workflow_dispatch:
 
 jobs:
@@ -45,7 +46,8 @@ jobs:
         # 2. 注入 avfilter 和 dynaudnorm 滤镜
         echo 'export COMMON_FF_CFG_FLAGS="$COMMON_FF_CFG_FLAGS --enable-avfilter --enable-filter=dynaudnorm"' >> config/module.sh
         if [ -f "android/contrib/config/module.sh" ]; then
-          echo 'export COMMON_FF_CFG_FLAGS="$COMMON_FF_CFG_FLAGS --enable-avfilter --enable-filter=dynaudnorm"' >> android/contrib/config/module.sh
+          #echo 'export COMMON_FF_CFG_FLAGS="$COMMON_FF_CFG_FLAGS --enable-avfilter --enable-filter=dynaudnorm"' >> android/contrib/config/module.sh
+          echo 'export COMMON_FF_CFG_FLAGS="$COMMON_FF_CFG_FLAGS --enable-avfilter --enable-filter=dynaudnorm --enable-filter=loudnorm"' >> config/module.sh
         fi
 
     - name: 6. 编译 armv7a 架构的 FFmpeg 和 IjkPlayer so 库
@@ -57,10 +59,10 @@ jobs:
         cd ..
         ./compile-ijk.sh armv7a
 
-    - name: 7. 上传编译好的 libijkffmpeg.so 产物
+    - name: 7. 上传编译好的全套 so 库产物
       uses: actions/upload-artifact@v4
       with:
-        name: libijkffmpeg-armeabi-v7a-scratch
+        name: ijkplayer-all-so-armeabi-v7a
         path: |
-          ijkplayer-src/android/ijkplayer/ijkplayer-armv7a/src/main/libs/armeabi-v7a/libijkffmpeg.so
+          ijkplayer-src/android/ijkplayer/ijkplayer-armv7a/src/main/libs/armeabi-v7a/*.so
 
