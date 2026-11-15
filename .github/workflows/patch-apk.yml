@@ -1,4 +1,4 @@
-name: Explore D2 Smali
+name: Patch D2 Smali and Rebuild
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - optimize-prefetch
 
 jobs:
-  explore:
+  patch:
     runs-on: ubuntu-latest
     steps:
     - name: 1. 检出代码
@@ -26,16 +26,111 @@ jobs:
       run: |
         java -jar apktool.jar d nTv.apk -o decompiled_apk
 
-    - name: 5. 提取 D2.smali 关键代码
+    - name: 5. 修改 D2.smali (异常捕获降级)
       run: |
-        echo "=== 寻找预取失败的异常处理 (修改点2) ==="
-        # 在 D2.smali 中搜索 "HLS segment prefetch failed"，打印前后各 50 行
-        grep -n -B 30 -A 30 "HLS segment prefetch failed" decompiled_apk/smali/xiao/bu/tv/D2.smali || echo "未找到异常处理代码"
-        
-        echo -e "\n\n=== 寻找预取循环 (修改点1) ==="
-        # 搜索包含 "HLS startup prefetch failed" 的地方
-        grep -n -B 50 -A 50 "HLS startup prefetch failed" decompiled_apk/smali/xiao/bu/tv/D2.smali || echo "未找到启动预取代码"
+        python3 << 'EOF'
+        import re
 
-        echo -e "\n\n=== 寻找常量 2 ==="
-        # 搜索 const/4 ... , 0x2
-        grep -n "const/4 v[0-9]*, 0x2" decompiled_apk/smali/xiao/bu/tv/D2.smali | head -n 20
+        file_path = "decompiled_apk/smali/xiao/bu/tv/D2.smali"
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # 修改点 2：预取失败安全降级，将 throw 替换为 return null
+        print("[-] 正在修改异常处理...")
+        old_throw = '''    if-eqz v0, :cond_15
+
+    .line 499
+    .line 500
+    check-cast p1, Ljava/io/IOException;
+
+    .line 501
+    .line 502
+    throw p1
+
+    .line 503
+    :cond_15
+    new-instance v0, Ljava/io/IOException;
+
+    .line 504
+    .line 505
+    const-string v1, "HLS segment prefetch failed"'''
+
+        new_throw = '''    if-eqz v0, :cond_15
+
+    .line 499
+    # 【修改】返回 null 安全降级
+    const/4 v0, 0x0
+    return-object v0
+
+    :cond_15
+    # 【修改】返回 null 安全降级
+    const/4 v0, 0x0
+    return-object v0
+    const-string v1, "HLS segment prefetch failed"'''
+
+        # 因为可能空格或 .line 有变化，我们用更宽泛的正则匹配
+        pattern = re.compile(r'if-eqz v0, :cond_15\s+\.line 499\s+\.line 500\s+check-cast p1, Ljava/io/IOException;\s+\.line 501\s+\.line 502\s+throw p1\s+\.line 503\s+:cond_15\s+new-instance v0, Ljava/io/IOException;\s+\.line 504\s+\.line 505\s+const-string v1, "HLS segment prefetch failed"')
+        
+        def repl(m):
+            return '''if-eqz v0, :cond_15
+
+    # 【修改】返回 null 安全降级
+    const/4 v0, 0x0
+    return-object v0
+
+    :cond_15
+    # 【修改】返回 null 安全降级
+    const/4 v0, 0x0
+    return-object v0
+    const-string v1, "HLS segment prefetch failed"'''
+            
+        new_content, count = pattern.subn(repl, content)
+        if count > 0:
+            print(f"[+] 成功修改异常捕获逻辑，共替换 {count} 处")
+            content = new_content
+        else:
+            print("[!] 未通过正则找到异常捕获逻辑，尝试备用匹配...")
+            # 备用简单替换
+            content = content.replace("throw p1\n\n    .line 503\n    :cond_15", "return-object p1\n\n    .line 503\n    :cond_15")
+            # 如果实在找不到，就算了
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        # 探索预取入口
+        print("\n=== 探索预取入口 (ExecutorService->execute) ===")
+        lines = content.split('\n')
+        for i, line in enumerate(lines):
+            if "Ljava/util/concurrent/ExecutorService;->execute" in line:
+                # 向上找方法定义
+                method_start = i
+                while method_start > 0 and not lines[method_start].startswith(".method"):
+                    method_start -= 1
+                
+                method_name = lines[method_start].strip()
+                print(f"发现位置行 {i}, 方法名: {method_name}")
+                
+                # 如果方法里有 'call'，并且包含 0x2 (可能是预取数量)
+                # 打印方法头和上下文
+                print("--- 上下文片段 ---")
+                for j in range(max(0, i-20), min(len(lines), i+10)):
+                    print(lines[j])
+                print("------------------\n")
+        EOF
+
+    - name: 6. 重新打包 APK
+      run: |
+        java -jar apktool.jar b decompiled_apk -o unsigned.apk
+
+    - name: 7. 对齐和签名 APK
+      run: |
+        BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
+        $BUILD_TOOLS/zipalign -v -p 4 unsigned.apk aligned.apk
+        keytool -genkey -v -keystore my-release-key.keystore -alias alias_name -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Android,O=Android,C=US"
+        $BUILD_TOOLS/apksigner sign --ks my-release-key.keystore --ks-pass pass:password --out final_patched.apk aligned.apk
+
+    - name: 8. 上传最终修改好的 APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: nTv-patched-apk
+        path: final_patched.apk
