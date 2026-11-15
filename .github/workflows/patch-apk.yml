@@ -1,4 +1,4 @@
-name: Patch D2 Smali and Rebuild
+name: Explore Add and FutureTask
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - optimize-prefetch
 
 jobs:
-  patch:
+  explore:
     runs-on: ubuntu-latest
     steps:
     - name: 1. 检出代码
@@ -26,7 +26,7 @@ jobs:
       run: |
         java -jar apktool.jar d nTv.apk -o decompiled_apk
 
-    - name: 5. 修改 D2.smali (异常捕获降级)
+    - name: 5. 探索 List->add 与 FutureTask 上下文
       run: |
         python3 << 'EOF'
         import re
@@ -35,49 +35,34 @@ jobs:
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        print("[-] 正在修改异常处理...")
-        old_throw = "    if-eqz v0, :cond_15\n\n    .line 499\n    .line 500\n    check-cast p1, Ljava/io/IOException;\n\n    .line 501\n    .line 502\n    throw p1\n\n    .line 503\n    :cond_15\n    new-instance v0, Ljava/io/IOException;\n\n    .line 504\n    .line 505\n    const-string v1, \"HLS segment prefetch failed\""
-        
-        new_throw = "    if-eqz v0, :cond_15\n\n    # 【修改】返回 null 安全降级\n    const/4 v0, 0x0\n    return-object v0\n\n    :cond_15\n    # 【修改】返回 null 安全降级\n    const/4 v0, 0x0\n    return-object v0\n    const-string v1, \"HLS segment prefetch failed\""
-
-        if old_throw in content:
-            content = content.replace(old_throw, new_throw)
-            print("[+] 成功修改异常捕获逻辑，改为了安全降级 return null")
-        else:
-            print("[!] 未找到精准匹配的异常捕获代码，跳过替换。可能是空白字符差异。")
-
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(content)
-
-        print("\n=== 探索预取入口 (ExecutorService->execute) ===")
         lines = content.split('\n')
+
+        print("=== 1. 寻找 Ljava/util/List;->add 附近的方法 ===")
         for i, line in enumerate(lines):
-            if "Ljava/util/concurrent/ExecutorService;->execute" in line:
+            if "Ljava/util/List;->add(Ljava/lang/Object;)Z" in line:
+                # 向上找方法定义
                 method_start = i
                 while method_start > 0 and not lines[method_start].startswith(".method"):
                     method_start -= 1
                 
-                method_name = lines[method_start].strip()
-                print(f"发现位置行 {i}, 方法名: {method_name}")
-                print("--- 上下文片段 ---")
-                for j in range(max(0, i-25), min(len(lines), i+10)):
+                # 打印方法名以及前后30行
+                print(f"\n[发现 List->add] 位置: 第 {i} 行, 所属方法: {lines[method_start].strip()}")
+                print("--- 上下文 开始 ---")
+                for j in range(max(0, i-30), min(len(lines), i+20)):
                     print(lines[j])
-                print("------------------\n")
+                print("--- 上下文 结束 ---\n")
+
+        print("\n=== 2. 寻找 Ljava/util/concurrent/FutureTask; 附近的方法 ===")
+        for i, line in enumerate(lines):
+            if "Ljava/util/concurrent/FutureTask;" in line:
+                method_start = i
+                while method_start > 0 and not lines[method_start].startswith(".method"):
+                    method_start -= 1
+                
+                print(f"\n[发现 FutureTask] 位置: 第 {i} 行, 所属方法: {lines[method_start].strip()}")
+                print("--- 上下文 开始 ---")
+                for j in range(max(0, i-30), min(len(lines), i+20)):
+                    print(lines[j])
+                print("--- 上下文 结束 ---\n")
+                break # 找到一个就行了，通常都在同一个方法里
         EOF
-
-    - name: 6. 重新打包 APK
-      run: |
-        java -jar apktool.jar b decompiled_apk -o unsigned.apk
-
-    - name: 7. 对齐和签名 APK
-      run: |
-        BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
-        $BUILD_TOOLS/zipalign -v -p 4 unsigned.apk aligned.apk
-        keytool -genkey -v -keystore my-release-key.keystore -alias alias_name -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Android,O=Android,C=US"
-        $BUILD_TOOLS/apksigner sign --ks my-release-key.keystore --ks-pass pass:password --out final_patched.apk aligned.apk
-
-    - name: 8. 上传最终修改好的 APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: nTv-patched-apk
-        path: final_patched.apk
