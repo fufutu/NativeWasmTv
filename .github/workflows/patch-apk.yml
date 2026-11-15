@@ -1,4 +1,4 @@
-name: Explore APK Structure
+name: Explore D2 Smali
 
 on:
   push:
@@ -26,23 +26,16 @@ jobs:
       run: |
         java -jar apktool.jar d nTv.apk -o decompiled_apk
 
-    - name: 5. 深度探索 Smali 结构
+    - name: 5. 提取 D2.smali 关键代码
       run: |
-        echo "=== 0. AndroidManifest 包名 ==="
-        grep "package=" decompiled_apk/AndroidManifest.xml
+        echo "=== 寻找预取失败的异常处理 (修改点2) ==="
+        # 在 D2.smali 中搜索 "HLS segment prefetch failed"，打印前后各 50 行
+        grep -n -B 30 -A 30 "HLS segment prefetch failed" decompiled_apk/smali/xiao/bu/tv/D2.smali || echo "未找到异常处理代码"
         
-        echo -e "\n=== 1. xiao/bu/tv 目录下的文件结构 ==="
-        # 即便混淆了，包名路径通常还在，我们看看里面有什么
-        ls -la decompiled_apk/smali/xiao/bu/tv/ 2>/dev/null | head -n 50 || echo "没有找到 xiao/bu/tv 目录"
-        
-        echo -e "\n=== 2. 通过特征字符串定位 HlsProxyServer (即使被混淆) ==="
-        # 搜 "HlsProxyServer" 这个 TAG，或者 "Proxy started port=" 日志，或者 "loopback"
-        grep -rl "Proxy started port=" decompiled_apk/smali* | head -n 5
-        grep -rl "HlsProxyServer" decompiled_apk/smali* | head -n 5
-        grep -rl "hls-proxy-accept" decompiled_apk/smali* | head -n 5
-        
-        echo -e "\n=== 3. 搜索 prefetchGenericSegments 方法名 ==="
-        grep -rl "prefetchGenericSegments" decompiled_apk/smali* | head -n 10
-        
-        echo -e "\n=== 4. 全局搜索 M3U8 关键字，看看哪个文件像代理 ==="
-        grep -rl "#EXTM3U" decompiled_apk/smali* | head -n 10
+        echo -e "\n\n=== 寻找预取循环 (修改点1) ==="
+        # 搜索包含 "HLS startup prefetch failed" 的地方
+        grep -n -B 50 -A 50 "HLS startup prefetch failed" decompiled_apk/smali/xiao/bu/tv/D2.smali || echo "未找到启动预取代码"
+
+        echo -e "\n\n=== 寻找常量 2 ==="
+        # 搜索 const/4 ... , 0x2
+        grep -n "const/4 v[0-9]*, 0x2" decompiled_apk/smali/xiao/bu/tv/D2.smali | head -n 20
