@@ -1,7 +1,9 @@
 name: Explore APK Structure
 
 on:
-  workflow_dispatch: # 只能手动触发
+  push:
+    branches:
+      - optimize-prefetch
 
 jobs:
   explore:
@@ -24,18 +26,23 @@ jobs:
       run: |
         java -jar apktool.jar d nTv.apk -o decompiled_apk
 
-    - name: 5. 探索 Smali 结构
+    - name: 5. 深度探索 Smali 结构
       run: |
-        echo "=== 1. smali 顶层目录结构 ==="
-        find decompiled_apk/smali* -maxdepth 3 -type d | head -n 50
-        
-        echo "=== 2. 搜索包含 HlsProxyServer 的文件 ==="
-        # 因为可能被混淆，我们搜所有文件的内容
-        grep -rl "HlsProxyServer" decompiled_apk/smali* | head -n 20 || echo "没有搜到 HlsProxyServer"
-        
-        echo "=== 3. 搜索包含 prefetchGenericSegments 的文件 ==="
-        grep -rl "prefetchGenericSegments" decompiled_apk/smali* | head -n 20 || echo "没有搜到 prefetchGenericSegments"
-        
-        echo "=== 4. 查看 AndroidManifest 包名 ==="
+        echo "=== 0. AndroidManifest 包名 ==="
         grep "package=" decompiled_apk/AndroidManifest.xml
-
+        
+        echo -e "\n=== 1. xiao/bu/tv 目录下的文件结构 ==="
+        # 即便混淆了，包名路径通常还在，我们看看里面有什么
+        ls -la decompiled_apk/smali/xiao/bu/tv/ 2>/dev/null | head -n 50 || echo "没有找到 xiao/bu/tv 目录"
+        
+        echo -e "\n=== 2. 通过特征字符串定位 HlsProxyServer (即使被混淆) ==="
+        # 搜 "HlsProxyServer" 这个 TAG，或者 "Proxy started port=" 日志，或者 "loopback"
+        grep -rl "Proxy started port=" decompiled_apk/smali* | head -n 5
+        grep -rl "HlsProxyServer" decompiled_apk/smali* | head -n 5
+        grep -rl "hls-proxy-accept" decompiled_apk/smali* | head -n 5
+        
+        echo -e "\n=== 3. 搜索 prefetchGenericSegments 方法名 ==="
+        grep -rl "prefetchGenericSegments" decompiled_apk/smali* | head -n 10
+        
+        echo -e "\n=== 4. 全局搜索 M3U8 关键字，看看哪个文件像代理 ==="
+        grep -rl "#EXTM3U" decompiled_apk/smali* | head -n 10
