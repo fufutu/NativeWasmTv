@@ -1786,7 +1786,7 @@ final class HlsProxyServer implements Closeable {
             if (genericStartupPrefetchSegments == 0 && !byteRangeMediaPlaylist) {
                 // Both tasks run in the background. The player waits only for
                 // whichever first segment it requests, never for the whole pair.
-                prefetchGenericSegments(mediaSegments, 2 + adaptiveBufferLevel);
+                prefetchGenericSegments(mediaSegments, 3 + adaptiveBufferLevel);
                 startupPrefetched = true;
             }
             if (genericStartupPrefetchSegments > 0
@@ -2000,11 +2000,9 @@ final class HlsProxyServer implements Closeable {
             synchronized (genericSegmentTasks) {
                 genericSegmentTasks.remove(originUrl);
             }
-            Throwable cause = error.getCause();
-            if (cause instanceof IOException) {
-                throw (IOException) cause;
-            }
-            throw new IOException("HLS segment prefetch failed", cause);
+            // 【修改】预取失败（比如切片太大或网络超时），返回 null，让播放器回退到边下边播
+            Log.w(TAG, "HLS segment prefetch failed, falling back: " + segmentName(originUrl), error.getCause());
+            return null;
         }
     }
 
@@ -2028,9 +2026,7 @@ final class HlsProxyServer implements Closeable {
         int end = Math.min(segments.size(), start + Math.max(1, count));
         for (int index = start; index < end; index++) {
             final String url = segments.get(index);
-            // Clear media streams directly to IJK. Whole-body prefetch both delays
-            // its first bytes and rejects 27-45 MiB UHD segments at the memory cap.
-            if(!hasAesSegmentKey(url)&&!needsCjsTransform(url)&&canStreamWithoutRewrite(url))continue;
+            // 【修改】放开对普通流的预取限制，让代理提前把切片下到内存
             selected.add(url);
             FutureTask<byte[]> task;
             synchronized (genericSegmentTasks) {
