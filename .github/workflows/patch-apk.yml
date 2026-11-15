@@ -1,13 +1,10 @@
-name: Patch and Rebuild APK
+name: Explore APK Structure
 
 on:
-  push:
-    branches:
-      - optimize-prefetch
-  workflow_dispatch:
+  workflow_dispatch: # 只能手动触发
 
 jobs:
-  patch:
+  explore:
     runs-on: ubuntu-latest
     steps:
     - name: 1. 检出代码
@@ -22,72 +19,23 @@ jobs:
     - name: 3. 下载 Apktool
       run: |
         wget https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar -O apktool.jar
-        chmod +x apktool.jar
 
     - name: 4. 反编译 APK
       run: |
         java -jar apktool.jar d nTv.apk -o decompiled_apk
 
-    - name: 5. 自动搜索 Smali 并执行修改
+    - name: 5. 探索 Smali 结构
       run: |
-        python3 << 'EOF'
-        import os, re, sys
+        echo "=== 1. smali 顶层目录结构 ==="
+        find decompiled_apk/smali* -maxdepth 3 -type d | head -n 50
+        
+        echo "=== 2. 搜索包含 HlsProxyServer 的文件 ==="
+        # 因为可能被混淆，我们搜所有文件的内容
+        grep -rl "HlsProxyServer" decompiled_apk/smali* | head -n 20 || echo "没有搜到 HlsProxyServer"
+        
+        echo "=== 3. 搜索包含 prefetchGenericSegments 的文件 ==="
+        grep -rl "prefetchGenericSegments" decompiled_apk/smali* | head -n 20 || echo "没有搜到 prefetchGenericSegments"
+        
+        echo "=== 4. 查看 AndroidManifest 包名 ==="
+        grep "package=" decompiled_apk/AndroidManifest.xml
 
-        target_file = None
-        # 遍历所有 smali 目录寻找目标文件
-        for root, dirs, files in os.walk("decompiled_apk"):
-            if "HlsProxyServer.smali" in files:
-                target_file = os.path.join(root, "HlsProxyServer.smali")
-                break
-
-        if not target_file:
-            print("[!] 找不到 HlsProxyServer.smali，反编译可能失败。")
-            # 打印出所有 smali 目录，看看结构
-            for root, dirs, files in os.walk("decompiled_apk"):
-                for d in dirs:
-                    if d.startswith("smali"):
-                        print(f"发现目录: {os.path.join(root, d)}")
-            sys.exit(1)
-
-        print(f"[+] 成功找到目标文件: {target_file}")
-
-        with open(target_file, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        # 寻找并打印 prefetchGenericSegments 方法的代码，方便我们后续精准修改
-        match = re.search(r'\.method.*?prefetchGenericSegments.*?\.end method', content, re.DOTALL)
-        if match:
-            print("\n================ 预取代码片段 START ================")
-            print(match.group(0)[:4000]) # 打印前4000个字符
-            print("================ 预取代码片段 END ==================\n")
-        else:
-            print("[!] 未能在文件中找到 prefetchGenericSegments 方法。")
-
-        # 尝试做极其安全的常量修改 (把某处的 2 改为 3，非关键，只是为了测试流程)
-        # 注意：这里不敢乱加逻辑，只把固定常量改掉
-        content = content.replace("const/4 v1, 0x2", "const/4 v1, 0x3")
-        content = content.replace("const/4 v0, 0x2", "const/4 v0, 0x3")
-
-        with open(target_file, "w", encoding="utf-8") as f:
-            f.write(content)
-            
-        print("[+] Smali 修改步骤完成！")
-        EOF
-
-    - name: 6. 重新打包 APK
-      run: |
-        java -jar apktool.jar b decompiled_apk -o unsigned.apk
-
-    - name: 7. 对齐和签名 APK
-      run: |
-        BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
-        echo "Using build-tools: $BUILD_TOOLS"
-        $BUILD_TOOLS/zipalign -v -p 4 unsigned.apk aligned.apk
-        keytool -genkey -v -keystore my-release-key.keystore -alias alias_name -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Android,O=Android,C=US"
-        $BUILD_TOOLS/apksigner sign --ks my-release-key.keystore --ks-pass pass:password --out final_patched.apk aligned.apk
-
-    - name: 8. 上传最终修改好的 APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: nTv-patched-apk
-        path: final_patched.apk
