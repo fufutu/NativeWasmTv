@@ -57,7 +57,16 @@ if (releaseSigningAvailable) {
 }
 
 android {
-    namespace 'xiao.bu.tv'
+    signingConfigs {
+        fufutu_release {signingConfig signingConfigs.fufutu_release
+            storeFile file("../fufutu-release.jks")
+            storePassword "fufutu456"
+            keyAlias "fufutu"
+            keyPassword "fufutu456"
+        }
+    }
+
+    namespace 'cn.fufutu.tv'
     buildFeatures { buildConfig true }
     // The prebuilt native libraries are already stripped; preserve the audited binaries.
     packagingOptions { jniLibs { keepDebugSymbols += ['**/*.so'] } }

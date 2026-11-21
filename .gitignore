@@ -1,4 +1,6 @@
 .gradle/
+patch.py
+.fufutu_apk_keys
 .idea/
 build/
 app/build/

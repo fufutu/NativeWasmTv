@@ -3,7 +3,7 @@ name: Build nTv ARM32 (standard, no browser-core)
 on:
   push:
     branches:
-      - 1.8.2-standard
+      - 1.8.2-standard  # 如果你换了分支，记得改成你当前的开发分支名
   workflow_dispatch:
 
 jobs:
@@ -13,21 +13,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: 1. 还原签名文件
+        run: |
+          # 从 GitHub Secrets 中读取 Base64 并解码为 jks 文件
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > fufutu-release.jks
+          ls -la fufutu-release.jks
+
+      - name: 2. Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Make gradlew executable
+      - name: 3. Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Build ARM32 debug APK
-        run: ./gradlew :app:assembleArm32Debug --stacktrace
+      - name: 4. Build ARM32 Release APK
+        # 注意这里改成了 assembleArm32Release
+        run: ./gradlew :app:assembleArm32Release --stacktrace
 
-      - name: Upload APK
+      - name: 5. Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: nTv-arm32-debug
-          path: app/build/outputs/apk/arm32/debug/*.apk
+          name: fufutu-tv-arm32-release
+          # 注意这里的路径改成了 release 目录
+          path: app/build/outputs/apk/arm32/release/*.apk
           if-no-files-found: error
