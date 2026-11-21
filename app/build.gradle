@@ -58,12 +58,14 @@ if (releaseSigningAvailable) {
 
 android {
     signingConfigs {
-        fufutu_release {signingConfig signingConfigs.fufutu_release
+        fufutu_release {
             storeFile file("../fufutu-release.jks")
             storePassword "fufutu456"
             keyAlias "fufutu"
             keyPassword "fufutu456"
         }
+    }
+
     }
 
     namespace 'cn.fufutu.tv'
@@ -80,15 +82,7 @@ android {
     buildToolsVersion '35.0.0'
     testBuildType project.findProperty('testBuildType') ?: 'debug'
 
-    signingConfigs {
-        if (releaseSigningAvailable) {
-            iptvRelease {
-                storeFile releaseKeystore
-                storePassword releaseSigningProperties.getProperty('storePassword')
-                keyAlias releaseSigningProperties.getProperty('alias')
-                keyPassword releaseSigningProperties.getProperty('keyPassword')
-            }
-        }
+    }
     }
 
     defaultConfig {
@@ -186,7 +180,7 @@ android {
     buildTypes {
         debug {
             if (releaseSigningAvailable) {
-                signingConfig signingConfigs.iptvRelease
+                
             }
             buildConfigField 'boolean', 'EMBED_CONTROL_PAGES', 'true'
             buildConfigField 'String', 'RECOMMENDED_JOY_SOURCE_URL',
@@ -207,7 +201,7 @@ android {
             minifyEnabled true
             shrinkResources true
             if (releaseSigningAvailable) {
-                signingConfig signingConfigs.iptvRelease
+                
             }
             buildConfigField 'boolean', 'EMBED_CONTROL_PAGES', 'false'
             buildConfigField 'String', 'RECOMMENDED_JOY_SOURCE_URL',
