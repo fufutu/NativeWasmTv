@@ -176,12 +176,15 @@ function saveCloudLive(refreshNow) {
     port: Number(document.getElementById("cloudLivePort").value) || 18086,
     windowSize: Number(document.getElementById("cloudLiveWindow").value) || 8,
     autoRefreshInterval: Number(document.getElementById("cloudLiveInterval").value) || 600,
+    hotLimit: Number(document.getElementById("cloudLiveHotLimit").value) || 5,
+    hotDays: Number(document.getElementById("cloudLiveHotDays").value) || 7,
+    hotIntervalSec: Number(document.getElementById("cloudLiveHotInterval").value) || 60,
     xTvgUrl: document.getElementById("cloudLiveEpg").value.trim(),
     authorization: document.getElementById("cloudLiveAuthorization").value.trim(),
     mcloudSign: document.getElementById("cloudLiveSign").value.trim(),
     lanAccess: document.getElementById("cloudLiveLan").checked,
     warmupEnabled: document.getElementById("cloudLiveWarmup").checked,
-    refreshNow: refreshNow === true
+    refreshIncremental: refreshNow === true
   };
   cloudLiveSaving = true;
   api("/api/settings", { cloudLive: payload }, function (error) {
@@ -192,7 +195,7 @@ function saveCloudLive(refreshNow) {
     }
     document.getElementById("cloudLiveAuthorization").value = "";
     document.getElementById("cloudLiveSign").value = "";
-    toast(refreshNow === true ? "已保存，正在刷新云盘频道" : "已保存云盘直播配置");
+    toast("已保存云盘直播配置，正在增量更新频道");
     pollCloudLiveStatus(10);
   });
 }
@@ -226,6 +229,9 @@ function renderCloudLive(cloud) {
   document.getElementById("cloudLivePort").value = cloud.port || 18086;
   document.getElementById("cloudLiveWindow").value = cloud.windowSize || 8;
   document.getElementById("cloudLiveInterval").value = cloud.autoRefreshInterval || 600;
+  document.getElementById("cloudLiveHotLimit").value = cloud.hotLimit || 5;
+  document.getElementById("cloudLiveHotDays").value = cloud.hotDays || 7;
+  document.getElementById("cloudLiveHotInterval").value = cloud.hotIntervalSec || 60;
   document.getElementById("cloudLiveEpg").value = cloud.xTvgUrl || "";
   document.getElementById("cloudLiveLan").checked = cloud.lanAccess !== false;
   document.getElementById("cloudLiveWarmup").checked = cloud.warmupEnabled === true;
@@ -259,6 +265,16 @@ function renderCloudLiveStatus(cloud) {
         (status.lastRefreshTookMs ? " · " + Math.round(status.lastRefreshTookMs / 1000) + " 秒" : ""));
     }
     if (status.lastRefreshError) parts.push("错误：" + status.lastRefreshError);
+    var hot = status.hotChannels || [];
+    if (hot.length) {
+      var hotText = [];
+      for (var i = 0; i < hot.length; i++) {
+        hotText.push((hot[i].name || hot[i].id) + "(" + (hot[i].hits || 0) + ")");
+      }
+      parts.push("热点：" + hotText.join("、"));
+    } else {
+      parts.push("热点：暂无播放记录");
+    }
     if (status.lanUrl) parts.push("局域网状态：" + status.lanUrl);
     if (cloud.storageDir) parts.push("缓存目录：" + cloud.storageDir);
   }

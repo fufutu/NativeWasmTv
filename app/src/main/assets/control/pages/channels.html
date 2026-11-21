@@ -105,6 +105,9 @@
           <div class="epg-source-row"><input id="cloudLivePort" type="number" inputmode="numeric" placeholder="本地端口，默认 18086" /></div>
           <div class="epg-source-row"><input id="cloudLiveWindow" type="number" inputmode="numeric" placeholder="窗口分片数，默认 8" /></div>
           <div class="epg-source-row"><input id="cloudLiveInterval" type="number" inputmode="numeric" placeholder="自动刷新秒数，默认 600" /></div>
+          <div class="epg-source-row"><input id="cloudLiveHotLimit" type="number" inputmode="numeric" placeholder="热点频道数量，默认 5" /></div>
+          <div class="epg-source-row"><input id="cloudLiveHotDays" type="number" inputmode="numeric" placeholder="热点统计天数，默认 7" /></div>
+          <div class="epg-source-row"><input id="cloudLiveHotInterval" type="number" inputmode="numeric" placeholder="热点刷新秒数，默认 60" /></div>
           <div class="epg-source-row"><input id="cloudLiveEpg" type="text" placeholder="节目单地址（可选）" /></div>
         </div>
         <div class="browser-settings-list">
@@ -138,7 +141,7 @@
         </div>
         <div class="actions">
           <button onclick="saveCloudLive(true)">保存并刷新</button
-          ><button onclick="refreshCloudLive()">立即强制刷新</button>
+          ><button onclick="refreshCloudLive()">全量刷新</button>
         </div>
         <div id="cloudLiveStatus" class="config-note" aria-live="polite"></div>
         <div class="config-note">授权信息只保存在本机，不会上传。</div>

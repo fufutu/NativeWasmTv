@@ -2,6 +2,7 @@ package xiao.bu.tv;
 
 import android.content.Context;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -50,6 +51,11 @@ final class CloudLiveService {
     private ExecutorService warmExecutor;
     private int refreshRetries;
     private String appliedStorageRoot = "";
+    private volatile long hotCacheAt;
+    private volatile JSONArray hotCache = new JSONArray();
+    private volatile CloudLiveStore hotCacheStore;
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> lastHitAt =
+            new java.util.concurrent.ConcurrentHashMap<String, Long>();
 
     private CloudLiveService(Context context) {
         this.context = context.getApplicationContext();
@@ -116,17 +122,31 @@ final class CloudLiveService {
             }
             CloudLiveTimeline.Window window = CloudLiveTimeline.folder(current,
                     executor(), channelId, meta, now, settings.windowSize, reset);
-            if (window != null && settings.warmupEnabled) {
-                current.recordHit(channelId);
+            if (window != null) {
+                recordChannelOpen(current, channelId, reset);
             }
             return window;
         }
         CloudLiveTimeline.Window window = CloudLiveTimeline.single(current, channelId, now,
                 settings.windowSize, reset);
-        if (window != null && settings.warmupEnabled) {
-            current.recordHit(channelId);
+        if (window != null) {
+            recordChannelOpen(current, channelId, reset);
         }
         return window;
+    }
+
+    /**
+     * HLS clients reload the playlist every few seconds. Count an open only once
+     * per minute per channel so hot ranking reflects opens rather than reloads.
+     */
+    private void recordChannelOpen(CloudLiveStore store, String channelId, boolean reset) {
+        long now = System.currentTimeMillis();
+        Long previous = lastHitAt.get(channelId);
+        if (!reset && previous != null && now - previous.longValue() < 60000L) {
+            return;
+        }
+        lastHitAt.put(channelId, now);
+        store.recordHit(channelId);
     }
 
     /** Returns false when a refresh is already running or the service is stopped. */
@@ -281,10 +301,31 @@ final class CloudLiveService {
                     .put("lanUrl", lanUrl)
                     .put("directories", current == null ? 0 : current.directoryCount())
                     .put("videos", current == null ? 0 : current.videoCount())
-                    .put("folders", current == null ? 0 : current.folderCount());
+                    .put("folders", current == null ? 0 : current.folderCount())
+                    .put("hotChannels", hotChannels(settings, current));
         } catch (JSONException impossible) {
             return new JSONObject();
         }
+    }
+
+    /**
+     * Most opened channels for the management page. Recomputed at most once per
+     * configured interval because the page polls status while it is open.
+     */
+    private JSONArray hotChannels(CloudLiveConfig settings, CloudLiveStore current) {
+        if (settings == null || current == null) {
+            return new JSONArray();
+        }
+        long now = System.currentTimeMillis();
+        if (hotCacheStore == current
+                && now - hotCacheAt < Math.max(10, settings.hotIntervalSec) * 1000L) {
+            return hotCache;
+        }
+        JSONArray fresh = current.hotChannels(settings.hotLimit, settings.hotDays);
+        hotCache = fresh;
+        hotCacheStore = current;
+        hotCacheAt = now;
+        return fresh;
     }
 
     private synchronized void applyConfig(CloudLiveConfig updated, boolean refreshAfterStart) {

@@ -29,6 +29,9 @@ final class CloudLiveConfig {
     private static final String DEBUG_LOG = "debug_log";
     private static final String LAN_ACCESS = "lan_access";
     private static final String WARMUP_ENABLED = "warmup_enabled";
+    private static final String HOT_LIMIT = "hot_limit";
+    private static final String HOT_DAYS = "hot_days";
+    private static final String HOT_INTERVAL_SEC = "hot_interval_sec";
 
     final boolean enabled;
     final int port;
@@ -42,10 +45,14 @@ final class CloudLiveConfig {
     final boolean debugLog;
     final boolean lanAccess;
     final boolean warmupEnabled;
+    final int hotLimit;
+    final int hotDays;
+    final int hotIntervalSec;
 
     private CloudLiveConfig(boolean enabled, int port, int windowSize, String parentFileId,
             String authorization, String mcloudSign, int autoRefreshInterval, String xTvgUrl,
-            String refreshToken, boolean debugLog, boolean lanAccess, boolean warmupEnabled) {
+            String refreshToken, boolean debugLog, boolean lanAccess, boolean warmupEnabled,
+            int hotLimit, int hotDays, int hotIntervalSec) {
         this.enabled = enabled;
         this.port = port;
         this.windowSize = windowSize;
@@ -58,6 +65,9 @@ final class CloudLiveConfig {
         this.debugLog = debugLog;
         this.lanAccess = lanAccess;
         this.warmupEnabled = warmupEnabled;
+        this.hotLimit = hotLimit;
+        this.hotDays = hotDays;
+        this.hotIntervalSec = hotIntervalSec;
     }
 
     static CloudLiveConfig load(Context context) {
@@ -75,7 +85,10 @@ final class CloudLiveConfig {
                 preferences.getString(REFRESH_TOKEN, "").trim(),
                 preferences.getBoolean(DEBUG_LOG, true),
                 preferences.getBoolean(LAN_ACCESS, true),
-                preferences.getBoolean(WARMUP_ENABLED, false));
+                preferences.getBoolean(WARMUP_ENABLED, false),
+                clamp(preferences.getInt(HOT_LIMIT, 5), 1, 20),
+                clamp(preferences.getInt(HOT_DAYS, 7), 1, 90),
+                Math.max(10, preferences.getInt(HOT_INTERVAL_SEC, 60)));
     }
 
     boolean hasCredentials() {
@@ -95,7 +108,10 @@ final class CloudLiveConfig {
                 && refreshToken.equals(other.refreshToken)
                 && debugLog == other.debugLog
                 && lanAccess == other.lanAccess
-                && warmupEnabled == other.warmupEnabled;
+                && warmupEnabled == other.warmupEnabled
+                && hotLimit == other.hotLimit
+                && hotDays == other.hotDays
+                && hotIntervalSec == other.hotIntervalSec;
     }
 
     static JSONObject describe(CloudLiveConfig config, String playlistUrl) throws JSONException {
@@ -112,6 +128,9 @@ final class CloudLiveConfig {
                 .put("debugLog", config.debugLog)
                 .put("lanAccess", config.lanAccess)
                 .put("warmupEnabled", config.warmupEnabled)
+                .put("hotLimit", config.hotLimit)
+                .put("hotDays", config.hotDays)
+                .put("hotIntervalSec", config.hotIntervalSec)
                 .put("playlistUrl", playlistUrl == null ? "" : playlistUrl);
     }
 
@@ -155,6 +174,27 @@ final class CloudLiveConfig {
         }
         if (request.has("warmupEnabled")) {
             editor.putBoolean(WARMUP_ENABLED, request.optBoolean("warmupEnabled", false));
+        }
+        if (request.has("hotLimit")) {
+            int hotLimit = request.optInt("hotLimit", 5);
+            if (hotLimit < 1 || hotLimit > 20) {
+                throw new JSONException("热点数量需要在 1 到 20 之间");
+            }
+            editor.putInt(HOT_LIMIT, hotLimit);
+        }
+        if (request.has("hotDays")) {
+            int hotDays = request.optInt("hotDays", 7);
+            if (hotDays < 1 || hotDays > 90) {
+                throw new JSONException("统计天数需要在 1 到 90 之间");
+            }
+            editor.putInt(HOT_DAYS, hotDays);
+        }
+        if (request.has("hotIntervalSec")) {
+            int hotIntervalSec = request.optInt("hotIntervalSec", 60);
+            if (hotIntervalSec < 10) {
+                throw new JSONException("热点刷新间隔不能小于 10 秒");
+            }
+            editor.putInt(HOT_INTERVAL_SEC, hotIntervalSec);
         }
         if (request.has("xTvgUrl")) {
             editor.putString(X_TVG_URL, request.optString("xTvgUrl", "").trim());

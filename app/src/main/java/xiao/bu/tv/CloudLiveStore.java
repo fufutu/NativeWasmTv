@@ -65,6 +65,9 @@ final class CloudLiveStore {
     private final Map<String, Long> segmentFailUntil = new HashMap<String, Long>();
     private final Map<String, Double> anchors = new HashMap<String, Double>();
     private final Map<String, Integer> hits = new HashMap<String, Integer>();
+    private final Map<String, Map<String, Integer>> hitDays =
+            new LinkedHashMap<String, Map<String, Integer>>();
+    private long lastHitsSaveAt;
     private final Map<String, String> parentNames = new LinkedHashMap<String, String>();
     private final Map<String, Map<String, String>> secondNames =
             new HashMap<String, Map<String, String>>();
@@ -138,23 +141,167 @@ final class CloudLiveStore {
         if (channelId == null || channelId.length() == 0) {
             return;
         }
+        boolean persist;
         synchronized (cacheLock) {
             Integer previous = hits.get(channelId);
             hits.put(channelId, previous == null ? 1 : previous + 1);
+            String day = dayKey(System.currentTimeMillis());
+            Map<String, Integer> bucket = hitDays.get(day);
+            if (bucket == null) {
+                bucket = new HashMap<String, Integer>();
+                hitDays.put(day, bucket);
+            }
+            Integer dayPrevious = bucket.get(channelId);
+            bucket.put(channelId, dayPrevious == null ? 1 : dayPrevious + 1);
+            long now = System.currentTimeMillis();
+            persist = now - lastHitsSaveAt >= 60000L;
+            if (persist) {
+                lastHitsSaveAt = now;
+            }
+        }
+        if (persist) {
+            saveHits();
         }
     }
 
     void saveHits() {
-        JSONObject json = new JSONObject();
+        JSONObject days = new JSONObject();
+        JSONObject totals = new JSONObject();
         synchronized (cacheLock) {
+            pruneHitsLocked();
+            for (Map.Entry<String, Map<String, Integer>> day : hitDays.entrySet()) {
+                JSONObject bucket = new JSONObject();
+                for (Map.Entry<String, Integer> entry : day.getValue().entrySet()) {
+                    try {
+                        bucket.put(entry.getKey(), entry.getValue().intValue());
+                    } catch (JSONException ignored) {
+                    }
+                }
+                try {
+                    days.put(day.getKey(), bucket);
+                } catch (JSONException ignored) {
+                }
+            }
             for (Map.Entry<String, Integer> entry : hits.entrySet()) {
                 try {
-                    json.put(entry.getKey(), entry.getValue().intValue());
+                    totals.put(entry.getKey(), entry.getValue().intValue());
                 } catch (JSONException ignored) {
                 }
             }
         }
-        writeJson(hitsFile, json);
+        try {
+            writeJson(hitsFile, new JSONObject()
+                    .put("days", days)
+                    .put("totals", totals));
+        } catch (JSONException error) {
+            AppLog.w(TAG, "Unable to save hit statistics", error);
+        }
+    }
+
+    /** Drops buckets older than the configured window and rebuilds totals from them. */
+    private void pruneHitsLocked() {
+        String cutoff = dayKey(System.currentTimeMillis()
+                - Math.max(0, config.hotDays - 1) * 86400000L);
+        java.util.Iterator<String> days = hitDays.keySet().iterator();
+        while (days.hasNext()) {
+            if (days.next().compareTo(cutoff) < 0) {
+                days.remove();
+            }
+        }
+        hits.clear();
+        for (Map<String, Integer> bucket : hitDays.values()) {
+            for (Map.Entry<String, Integer> entry : bucket.entrySet()) {
+                Integer previous = hits.get(entry.getKey());
+                hits.put(entry.getKey(), (previous == null ? 0 : previous)
+                        + entry.getValue().intValue());
+            }
+        }
+    }
+
+    /** Most opened channels within the configured day window, for the web page. */
+    JSONArray hotChannels(int limit, int days) {
+        final Map<String, Integer> counts = new HashMap<String, Integer>();
+        String cutoff = dayKey(System.currentTimeMillis()
+                - Math.max(0, days - 1) * 86400000L);
+        synchronized (cacheLock) {
+            java.util.Iterator<Map.Entry<String, Map<String, Integer>>> it =
+                    hitDays.entrySet().iterator();
+            boolean pruned = false;
+            while (it.hasNext()) {
+                Map.Entry<String, Map<String, Integer>> entry = it.next();
+                if (entry.getKey().compareTo(cutoff) < 0) {
+                    it.remove();
+                    pruned = true;
+                    continue;
+                }
+                for (Map.Entry<String, Integer> channel : entry.getValue().entrySet()) {
+                    Integer previous = counts.get(channel.getKey());
+                    counts.put(channel.getKey(), (previous == null ? 0 : previous)
+                            + channel.getValue().intValue());
+                }
+            }
+            if (pruned) {
+                pruneHitsLocked();
+            }
+        }
+        List<Map.Entry<String, Integer>> ordered =
+                new ArrayList<Map.Entry<String, Integer>>(counts.entrySet());
+        java.util.Collections.sort(ordered,
+                new java.util.Comparator<Map.Entry<String, Integer>>() {
+                    @Override public int compare(Map.Entry<String, Integer> left,
+                            Map.Entry<String, Integer> right) {
+                        return right.getValue().intValue() - left.getValue().intValue();
+                    }
+                });
+        Map<String, String> names = playlistChannelNames();
+        JSONArray result = new JSONArray();
+        for (Map.Entry<String, Integer> entry : ordered) {
+            if (result.length() >= limit) {
+                break;
+            }
+            String id = entry.getKey();
+            if (!names.containsKey(id)) {
+                continue;
+            }
+            try {
+                result.put(new JSONObject().put("id", id)
+                        .put("name", names.get(id))
+                        .put("hits", entry.getValue().intValue()));
+            } catch (JSONException ignored) {
+            }
+        }
+        return result;
+    }
+
+    /** Channel id to title lookup built from the published playlist. */
+    private Map<String, String> playlistChannelNames() {
+        Map<String, String> names = new LinkedHashMap<String, String>();
+        for (String line : playlistText.split("\n")) {
+            String trimmed = line.trim();
+            if (!trimmed.startsWith("#EXTINF")) {
+                continue;
+            }
+            int idStart = trimmed.indexOf("tvg-id=\"");
+            if (idStart < 0) {
+                continue;
+            }
+            idStart += "tvg-id=\"".length();
+            int idEnd = trimmed.indexOf('"', idStart);
+            if (idEnd <= idStart) {
+                continue;
+            }
+            int comma = trimmed.lastIndexOf(',');
+            if (comma < 0 || comma + 1 >= trimmed.length()) {
+                continue;
+            }
+            names.put(trimmed.substring(idStart, idEnd), trimmed.substring(comma + 1));
+        }
+        return names;
+    }
+
+    private static String dayKey(long timeMs) {
+        return new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                .format(new java.util.Date(timeMs));
     }
 
     /**
@@ -314,9 +461,41 @@ final class CloudLiveStore {
         }
         JSONObject hitsJson = readJson(hitsFile);
         if (hitsJson != null) {
-            for (java.util.Iterator<String> it = hitsJson.keys(); it.hasNext(); ) {
-                String key = it.next();
-                hits.put(key, hitsJson.optInt(key, 0));
+            JSONObject days = hitsJson.optJSONObject("days");
+            if (days != null) {
+                for (java.util.Iterator<String> it = days.keys(); it.hasNext(); ) {
+                    String day = it.next();
+                    JSONObject bucketJson = days.optJSONObject(day);
+                    if (bucketJson == null) {
+                        continue;
+                    }
+                    Map<String, Integer> bucket = new HashMap<String, Integer>();
+                    for (java.util.Iterator<String> child = bucketJson.keys();
+                            child.hasNext(); ) {
+                        String key = child.next();
+                        bucket.put(key, bucketJson.optInt(key, 0));
+                    }
+                    hitDays.put(day, bucket);
+                }
+                synchronized (cacheLock) {
+                    pruneHitsLocked();
+                }
+            } else {
+                // Legacy flat {id: count} file: keep the values as today's bucket.
+                Map<String, Integer> bucket = new HashMap<String, Integer>();
+                String today = dayKey(System.currentTimeMillis());
+                for (java.util.Iterator<String> it = hitsJson.keys(); it.hasNext(); ) {
+                    String key = it.next();
+                    int count = hitsJson.optInt(key, 0);
+                    if (count <= 0) {
+                        continue;
+                    }
+                    bucket.put(key, count);
+                    hits.put(key, count);
+                }
+                if (!bucket.isEmpty()) {
+                    hitDays.put(today, bucket);
+                }
             }
         }
         AppLog.i(TAG, "Loaded cache: " + dirChildren.size() + " directories, "

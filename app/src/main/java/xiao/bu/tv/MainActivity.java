@@ -912,6 +912,8 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             new LinkedHashMap<Long, BrowserImageDownload>();
     private FrameLayout userScriptInstallOverlay;
     private int userScriptInstallGeneration;
+    private FrameLayout voiceSwitchOverlay;
+    private int voiceSwitchGeneration;
 
     private String directHttpMediaUrl;
     private int directHlsFallbackRequestId = -1;
@@ -3217,6 +3219,11 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                 }
 
                 @Override
+                public String channelSwitch(JSONObject request) throws Exception {
+                    return handleVoiceChannelSwitch(request);
+                }
+
+                @Override
                 public String mediaControl(JSONObject request) throws Exception {
                     return handleMediaControl(request);
                 }
@@ -4052,6 +4059,163 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
 
         runOnUiThread(command);
         return new JSONObject().put("ok", true).toString();
+    }
+
+    /**
+     * POST /api/channel/switch {text, play}. Speech-to-text callers send raw
+     * recognition text; confident matches switch immediately, otherwise the TV
+     * shows the top three with an eight second auto-play countdown.
+     */
+    private String handleVoiceChannelSwitch(JSONObject request) throws Exception {
+        if (receiverRenderOnly) {
+            throw new ControlRequestException(400, "电视正在投屏接管，暂不支持语音切台");
+        }
+        String text = request.optString("text", request.optString("query", "")).trim();
+        if (text.length() == 0) {
+            throw new ControlRequestException(400, "缺少语音识别文本");
+        }
+        VoiceChannelMatcher.Result result = VoiceChannelMatcher.match(text,
+                ChannelCatalog.GROUPS);
+        if (result.isEmpty()) {
+            throw new ControlRequestException(404, "没有找到匹配的频道");
+        }
+        JSONArray candidates = new JSONArray();
+        for (VoiceChannelMatcher.Candidate candidate : result.candidates) {
+            candidates.put(new JSONObject()
+                    .put("name", candidate.channelName)
+                    .put("group", candidate.groupName)
+                    .put("groupIndex", candidate.group)
+                    .put("channelIndex", candidate.channel)
+                    .put("score", Math.round(candidate.score * 100) / 100.0d));
+        }
+        if (!request.optBoolean("play", true)) {
+            return new JSONObject().put("ok", true).put("action", "candidates")
+                    .put("confident", result.confident())
+                    .put("candidates", candidates).toString();
+        }
+        if (result.confident()) {
+            VoiceChannelMatcher.Candidate best = result.best();
+            switchToVoiceChannel(best);
+            return new JSONObject().put("ok", true).put("action", "switch")
+                    .put("name", best.channelName).put("group", best.groupName)
+                    .put("candidates", candidates).toString();
+        }
+        showVoiceChannelCandidates(text, result.candidates);
+        return new JSONObject().put("ok", true).put("action", "candidates")
+                .put("autoPlaySeconds", 8).put("candidates", candidates).toString();
+    }
+
+    private void switchToVoiceChannel(final VoiceChannelMatcher.Candidate candidate) {
+        try {
+            handleWebControl(new JSONObject().put("action", "play")
+                    .put("group", candidate.group)
+                    .put("channel", candidate.channel));
+        } catch (JSONException error) {
+            runOnUiThread(() -> {
+                if (!isFinishing()) {
+                    Toast.makeText(MainActivity.this,
+                            "语音切台失败：" + error.getMessage(), Toast.LENGTH_LONG).show();
+                }
+            });
+        }
+    }
+
+    private void showVoiceChannelCandidates(final String text,
+            final List<VoiceChannelMatcher.Candidate> candidates) {
+        runOnUiThread(() -> {
+            if (isFinishing() || !(root instanceof ViewGroup)) return;
+            removeVoiceSwitchOverlay();
+            final int generation = voiceSwitchGeneration;
+            final FrameLayout overlay = new FrameLayout(this);
+            overlay.setBackgroundColor(0xb8000000);
+            overlay.setClickable(true);
+            overlay.setFocusable(true);
+            overlay.setContentDescription("语音选台");
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(userScriptOverlayDp(28), userScriptOverlayDp(24),
+                    userScriptOverlayDp(28), userScriptOverlayDp(22));
+            GradientDrawable background = new GradientDrawable();
+            background.setColor(Color.rgb(250, 251, 253));
+            background.setCornerRadius(userScriptOverlayDp(18));
+            background.setStroke(userScriptOverlayDp(1), Color.rgb(210, 214, 222));
+            card.setBackgroundDrawable(background);
+            TextView title = userScriptOverlayText("语音选台", 24,
+                    Color.rgb(28, 31, 36), true);
+            card.addView(title);
+            TextView detail = userScriptOverlayText("识别为「" + text + "」，请选择要播放的频道",
+                    16, Color.rgb(96, 102, 112), false);
+            detail.setPadding(0, userScriptOverlayDp(10), 0, userScriptOverlayDp(14));
+            card.addView(detail);
+            final TextView countdown = userScriptOverlayText("", 15,
+                    Color.rgb(176, 43, 43), false);
+            countdown.setPadding(0, userScriptOverlayDp(10), 0, 0);
+            Button first = null;
+            for (int index = 0; index < candidates.size(); index++) {
+                final VoiceChannelMatcher.Candidate candidate = candidates.get(index);
+                Button button = userScriptOverlayButton((index + 1) + ". "
+                        + candidate.channelName + " · " + candidate.groupName);
+                button.setLayoutParams(new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT));
+                button.setOnClickListener(v -> {
+                    if (generation != voiceSwitchGeneration) return;
+                    removeVoiceSwitchOverlay();
+                    switchToVoiceChannel(candidate);
+                });
+                card.addView(button);
+                if (first == null) first = button;
+            }
+            card.addView(countdown);
+            if (!candidates.isEmpty()) {
+                countdown.setText("8 秒后自动播放：" + candidates.get(0).channelName);
+            }
+            FrameLayout.LayoutParams cardParams = new FrameLayout.LayoutParams(
+                    Math.max(userScriptOverlayDp(300), Math.min(userScriptOverlayDp(680),
+                            getResources().getDisplayMetrics().widthPixels
+                                    - userScriptOverlayDp(48))),
+                    FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+            overlay.addView(card, cardParams);
+            ((ViewGroup) root).addView(overlay, new ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+            voiceSwitchOverlay = overlay;
+            overlay.bringToFront();
+            ensureFlyMouseOnTop();
+            if (first != null) first.requestFocus();
+            scheduleVoiceSwitchCountdown(overlay, countdown, candidates, generation);
+        });
+    }
+
+    private void scheduleVoiceSwitchCountdown(final View overlay, final TextView countdown,
+            final List<VoiceChannelMatcher.Candidate> candidates, final int generation) {
+        final int[] remaining = {8};
+        overlay.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (generation != voiceSwitchGeneration || voiceSwitchOverlay != overlay) return;
+                remaining[0]--;
+                if (remaining[0] <= 0) {
+                    removeVoiceSwitchOverlay();
+                    switchToVoiceChannel(candidates.get(0));
+                    return;
+                }
+                countdown.setText(remaining[0] + " 秒后自动播放："
+                        + candidates.get(0).channelName);
+                overlay.postDelayed(this, 1000L);
+            }
+        }, 1000L);
+    }
+
+    private void removeVoiceSwitchOverlay() {
+        voiceSwitchGeneration++;
+        FrameLayout overlay = voiceSwitchOverlay;
+        voiceSwitchOverlay = null;
+        if (overlay != null) {
+            ViewParent parent = overlay.getParent();
+            if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(overlay);
+        }
+        if (webSourceView != null && webSourceView.isPageVisible()) webSourceView.requestFocus();
+        ensureFlyMouseOnTop();
     }
 
     private String handleWifiDirect(JSONObject request) throws Exception {
@@ -6199,8 +6363,10 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                         requestCloudLiveStoragePermission();
                     }
                 });
-                if (cloudLive.optBoolean("refreshNow", false)) {
-                    cloudLiveService.requestRefresh(true);
+                if (cloudLive.optBoolean("refreshIncremental", false)) {
+                    // Page saves always refresh incrementally; only the explicit
+                    // "全量刷新" button may force a full scan.
+                    cloudLiveService.requestRefresh(false);
                 }
             }
         }
@@ -17421,6 +17587,15 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             }
             // Keep channel, playback and browser shortcuts from reaching the page
             // while the modal card is open. DPAD/ENTER still use normal View focus.
+            return super.dispatchKeyEvent(event);
+        }
+        if (voiceSwitchOverlay != null) {
+            int keyCode = normalizeRemoteKeyCode(event.getKeyCode());
+            if (event.getAction() == KeyEvent.ACTION_DOWN
+                    && (keyCode == KeyEvent.KEYCODE_BACK || keyCode == KeyEvent.KEYCODE_MENU)) {
+                removeVoiceSwitchOverlay();
+                return true;
+            }
             return super.dispatchKeyEvent(event);
         }
         if(tvUiMenu.dispatchKeyEvent(event))return true;

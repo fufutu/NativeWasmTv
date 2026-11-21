@@ -43,6 +43,9 @@ final class LocalControlServer implements Closeable {
         MediaFileDownload mediaDownload(String sourceKey, String range, String ifRange) throws Exception;
         String browserAction(long afterId) throws Exception;
         String control(JSONObject request) throws Exception;
+        default String channelSwitch(JSONObject request) throws Exception {
+            throw new ControlRequestException(404, "不支持语音切台");
+        }
         String mediaControl(JSONObject request) throws Exception;
         String pointer(JSONObject request) throws Exception;
 
@@ -545,6 +548,10 @@ final class LocalControlServer implements Closeable {
         } else if ("POST".equals(method) && "/api/control".equals(path)) {
             send(socket, 200, "application/json; charset=utf-8",
                     listener.control(new JSONObject(new String(body, "UTF-8"))).getBytes("UTF-8"));
+        } else if ("POST".equals(method) && "/api/channel/switch".equals(path)) {
+            send(socket, 200, "application/json; charset=utf-8",
+                    listener.channelSwitch(new JSONObject(new String(body, "UTF-8")))
+                            .getBytes("UTF-8"));
         } else if ("POST".equals(method) && "/api/media/control".equals(path)) {
             send(socket, 200, "application/json; charset=utf-8",
                     listener.mediaControl(new JSONObject(new String(body, "UTF-8")))
