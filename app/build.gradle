@@ -66,8 +66,6 @@ android {
         }
     }
 
-    }
-
     namespace 'cn.fufutu.tv'
     buildFeatures { buildConfig true }
     // The prebuilt native libraries are already stripped; preserve the audited binaries.
@@ -82,16 +80,15 @@ android {
     buildToolsVersion '35.0.0'
     testBuildType project.findProperty('testBuildType') ?: 'debug'
 
-    }
-    }
 
     defaultConfig {
         buildConfigField 'boolean', 'BUNDLED_LITE_BROWSER', 'false'
         buildConfigField 'boolean', 'NETWORK_WARMUP_CHECKS', project.hasProperty('networkWarmupChecks') ? 'true' : 'false'
         // Historical name retained for the JNI bridge and standalone trial checks.
         buildConfigField 'boolean', 'H5E_STREAMING_CHECKS', bundledH5eStreaming ? 'true' : 'false'
+        // 【修改】默认包名改成了你的新包名
         applicationId project.hasProperty('applicationIdOverride')
-                ? project.property('applicationIdOverride').toString() : 'xiao.bu.tv'
+                ? project.property('applicationIdOverride').toString() : 'cn.fufutu.tv'
         minSdkVersion 14
         // One 320x180 fallback for API 14-20; API 21+ keeps the original vector.
         vectorDrawables.generatedDensities = ['xhdpi']
@@ -179,9 +176,7 @@ android {
 
     buildTypes {
         debug {
-            if (releaseSigningAvailable) {
-                
-            }
+            // 【修复】移除了原作者遗留的空壳 if 判断
             buildConfigField 'boolean', 'EMBED_CONTROL_PAGES', 'true'
             buildConfigField 'String', 'RECOMMENDED_JOY_SOURCE_URL',
                     '"https://raw.githubusercontent.com/buhanzhe/webSourceM3U8/refs/heads/main/JoyPage.txt"'
@@ -200,9 +195,7 @@ android {
             // JNI, JavaScript and downloaded plugin entry points stay in the keep rules.
             minifyEnabled true
             shrinkResources true
-            if (releaseSigningAvailable) {
-                
-            }
+            // 【修复】移除了原作者遗留的空壳 if 判断
             buildConfigField 'boolean', 'EMBED_CONTROL_PAGES', 'false'
             buildConfigField 'String', 'RECOMMENDED_JOY_SOURCE_URL',
                     '"https://github.com/buhanzhe/webSourceM3U8/releases/latest/download/JoyPage.txt"'
@@ -245,6 +238,8 @@ android {
             if (project.findProperty('testRunner') == 'xiao.bu.tv.CjsV5Instrumentation') {
                 proguardFile 'proguard-cjs-test.pro'
             }
+            // 【关键】绑定你的专属签名
+            signingConfig signingConfigs.fufutu_release
         }
     }
 
@@ -407,3 +402,4 @@ tasks.register('writeBuildCapabilities') {
         output.get().asFile.setText(JsonOutput.prettyPrint(JsonOutput.toJson(browserBuild)) + '\n', 'UTF-8')
     }
 }
+
