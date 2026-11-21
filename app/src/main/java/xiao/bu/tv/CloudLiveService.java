@@ -175,13 +175,25 @@ final class CloudLiveService {
         }
     }
 
+    /** True when the local server is up and the catalog is loaded. */
+    boolean isRunning() {
+        return store != null;
+    }
+
     JSONObject statusJson() {
         CloudLiveConfig settings = config;
         CloudLiveStore current = store;
+        boolean enabled = settings != null && settings.enabled;
+        String startupError = "";
+        if (current == null) {
+            startupError = lastError.length() > 0 ? lastError
+                    : enabled ? "服务未启动" : "未启用";
+        }
         try {
             return new JSONObject()
-                    .put("enabled", settings != null && settings.enabled)
+                    .put("enabled", enabled)
                     .put("running", current != null)
+                    .put("startupError", startupError)
                     .put("playlistUrl", playlistUrl)
                     .put("channelCount", current == null ? 0 : current.channelCount())
                     .put("refreshing", refreshing)
@@ -200,6 +212,7 @@ final class CloudLiveService {
         config = updated;
         if (!updated.enabled) {
             setSourceEnabled(false);
+            lastError = "未启用";
             return;
         }
         File root = new File(context.getFilesDir(), "cloudlive");
@@ -239,6 +252,7 @@ final class CloudLiveService {
         if (ensureSource(playlistUrl, true)) {
             catalogRefreshPending = true;
         }
+        lastError = "";
         final ScheduledExecutorService scheduled = scheduler;
         scheduled.scheduleWithFixedDelay(new Runnable() {
             @Override public void run() {

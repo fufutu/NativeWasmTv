@@ -6179,20 +6179,30 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                     .putBoolean(AUTO_UPDATE_CHANNEL_LIST, autoUpdateChannelList).apply();
             AppLog.i(TAG, "Automatic channel list update=" + autoUpdateChannelList);
         }
+        CloudLiveService cloudLiveService = CloudLiveService.get(this);
         if (request.has("cloudLive")) {
             JSONObject cloudLive = request.optJSONObject("cloudLive");
             if (cloudLive != null) {
-                CloudLiveConfig.save(this, cloudLive);
-                CloudLiveService.get(this).restart();
+                try {
+                    CloudLiveConfig.save(this, cloudLive);
+                } catch (JSONException invalid) {
+                    throw new ControlRequestException(400, invalid.getMessage() == null
+                            ? "云盘直播配置无效" : invalid.getMessage());
+                }
+                cloudLiveService.restart();
                 AppLog.i(TAG, "Cloud drive pseudo-live settings updated");
                 if (cloudLive.optBoolean("refreshNow", false)) {
-                    CloudLiveService.get(this).requestRefresh(true);
+                    cloudLiveService.requestRefresh(true);
                 }
             }
         }
-        if (request.optBoolean("cloudLiveRefresh", false)
-                && !CloudLiveService.get(this).requestRefresh(true)) {
-            throw new JSONException("云盘频道正在刷新中，请稍后再试");
+        if (request.optBoolean("cloudLiveRefresh", false)) {
+            if (!cloudLiveService.isRunning()) {
+                throw new ControlRequestException(400, "云盘直播未启用，请打开右上角开关并保存");
+            }
+            if (!cloudLiveService.requestRefresh(true)) {
+                throw new ControlRequestException(409, "云盘频道正在刷新中，请稍后再试");
+            }
         }
         if (request.has("liveDelayMode")) {
             String rawMode = request.optString("liveDelayMode", LIVE_DELAY_STABLE);

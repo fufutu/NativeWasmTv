@@ -165,9 +165,14 @@ function saveAutoUpdateChannelList() {
 var cloudLiveSaving = false;
 function saveCloudLive(refreshNow) {
   if (cloudLiveSaving) return;
+  var parentInput = document.getElementById("cloudLiveParent");
+  var enableSwitch = document.getElementById("cloudLiveEnabled");
+  if (refreshNow === true && parentInput.value.trim().length > 0) {
+    enableSwitch.checked = true;
+  }
   var payload = {
-    enabled: document.getElementById("cloudLiveEnabled").checked,
-    parentFileId: document.getElementById("cloudLiveParent").value.trim(),
+    enabled: enableSwitch.checked,
+    parentFileId: parentInput.value.trim(),
     port: Number(document.getElementById("cloudLivePort").value) || 18086,
     windowSize: Number(document.getElementById("cloudLiveWindow").value) || 8,
     autoRefreshInterval: Number(document.getElementById("cloudLiveInterval").value) || 600,
@@ -229,17 +234,25 @@ function renderCloudLive(cloud) {
 function renderCloudLiveStatus(cloud) {
   if (!cloud || typeof cloud !== "object") cloud = {};
   var status = cloud.status || {};
+  var enabled = cloud.enabled === true;
+  var running = status.running === true;
   var parts = [];
-  if (cloud.playlistUrl) parts.push("频道源：" + cloud.playlistUrl);
-  parts.push("频道数：" + (status.channelCount || 0));
-  if (status.refreshing) {
-    parts.push("正在刷新…");
-  } else if (status.lastRefreshAt) {
-    parts.push("上次刷新 " + new Date(status.lastRefreshAt).toLocaleTimeString() +
-      " · " + (status.lastRefreshChannels || 0) + " 个频道" +
-      (status.lastRefreshTookMs ? " · " + Math.round(status.lastRefreshTookMs / 1000) + " 秒" : ""));
+  if (!enabled) {
+    parts.push("未启用：打开右上角开关后保存");
+  } else if (!running) {
+    parts.push("服务未启动：" + (status.startupError || "请检查根目录 ID 与授权信息"));
+  } else {
+    if (cloud.playlistUrl) parts.push("频道源：" + cloud.playlistUrl);
+    parts.push("频道数：" + (status.channelCount || 0));
+    if (status.refreshing) {
+      parts.push("正在刷新…");
+    } else if (status.lastRefreshAt) {
+      parts.push("上次刷新 " + new Date(status.lastRefreshAt).toLocaleTimeString() +
+        " · " + (status.lastRefreshChannels || 0) + " 个频道" +
+        (status.lastRefreshTookMs ? " · " + Math.round(status.lastRefreshTookMs / 1000) + " 秒" : ""));
+    }
+    if (status.lastRefreshError) parts.push("错误：" + status.lastRefreshError);
   }
-  if (status.lastRefreshError) parts.push("错误：" + status.lastRefreshError);
   document.getElementById("cloudLiveStatus").textContent = parts.join(" · ");
 }
 
