@@ -108,6 +108,24 @@ final class CloudLiveStore {
         return count;
     }
 
+    int directoryCount() {
+        synchronized (cacheLock) {
+            return dirChildren.size();
+        }
+    }
+
+    int videoCount() {
+        synchronized (cacheLock) {
+            return videoChannels.size();
+        }
+    }
+
+    int folderCount() {
+        synchronized (cacheLock) {
+            return folderChannels.size();
+        }
+    }
+
     void loadFromDisk() {
         ensureDirectories();
         JSONObject names = readJson(namesFile);

@@ -24,6 +24,7 @@ final class CloudLiveConfig {
     private static final String X_TVG_URL = "x_tvg_url";
     private static final String REFRESH_TOKEN = "refresh_token";
     private static final String DEBUG_LOG = "debug_log";
+    private static final String LAN_ACCESS = "lan_access";
 
     final boolean enabled;
     final int port;
@@ -35,10 +36,11 @@ final class CloudLiveConfig {
     final String xTvgUrl;
     final String refreshToken;
     final boolean debugLog;
+    final boolean lanAccess;
 
     private CloudLiveConfig(boolean enabled, int port, int windowSize, String parentFileId,
             String authorization, String mcloudSign, int autoRefreshInterval, String xTvgUrl,
-            String refreshToken, boolean debugLog) {
+            String refreshToken, boolean debugLog, boolean lanAccess) {
         this.enabled = enabled;
         this.port = port;
         this.windowSize = windowSize;
@@ -49,6 +51,7 @@ final class CloudLiveConfig {
         this.xTvgUrl = xTvgUrl;
         this.refreshToken = refreshToken;
         this.debugLog = debugLog;
+        this.lanAccess = lanAccess;
     }
 
     static CloudLiveConfig load(Context context) {
@@ -64,7 +67,8 @@ final class CloudLiveConfig {
                 Math.max(60, preferences.getInt(AUTO_REFRESH_INTERVAL, 600)),
                 preferences.getString(X_TVG_URL, "http://epg.51zmt.top:8000/e.xml").trim(),
                 preferences.getString(REFRESH_TOKEN, "").trim(),
-                preferences.getBoolean(DEBUG_LOG, true));
+                preferences.getBoolean(DEBUG_LOG, true),
+                preferences.getBoolean(LAN_ACCESS, true));
     }
 
     boolean hasCredentials() {
@@ -83,6 +87,7 @@ final class CloudLiveConfig {
                 .put("xTvgUrl", config.xTvgUrl)
                 .put("refreshTokenSet", config.refreshToken.length() > 0)
                 .put("debugLog", config.debugLog)
+                .put("lanAccess", config.lanAccess)
                 .put("playlistUrl", playlistUrl == null ? "" : playlistUrl);
     }
 
@@ -120,6 +125,9 @@ final class CloudLiveConfig {
                 throw new JSONException("刷新间隔不能小于 60 秒");
             }
             editor.putInt(AUTO_REFRESH_INTERVAL, interval);
+        }
+        if (request.has("lanAccess")) {
+            editor.putBoolean(LAN_ACCESS, request.optBoolean("lanAccess", true));
         }
         if (request.has("xTvgUrl")) {
             editor.putString(X_TVG_URL, request.optString("xTvgUrl", "").trim());

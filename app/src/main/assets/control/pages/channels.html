@@ -107,6 +107,21 @@
           <div class="epg-source-row"><input id="cloudLiveInterval" type="number" inputmode="numeric" placeholder="自动刷新秒数，默认 600" /></div>
           <div class="epg-source-row"><input id="cloudLiveEpg" type="text" placeholder="节目单地址（可选）" /></div>
         </div>
+        <div class="browser-settings-list">
+          <div class="browser-setting-row">
+            <div class="browser-setting-copy">
+              <b>允许局域网访问</b
+              ><span>开启后内网电脑可用 http://电视IP:端口/debug 查看状态</span>
+            </div>
+            <input
+              id="cloudLiveLan"
+              class="source-toggle"
+              aria-label="允许局域网访问"
+              type="checkbox"
+              onchange="saveCloudLive()"
+            />
+          </div>
+        </div>
         <div class="actions">
           <button onclick="saveCloudLive(true)">保存并刷新</button
           ><button onclick="refreshCloudLive()">立即刷新</button>

@@ -43,6 +43,7 @@ final class CloudLiveService {
     private volatile String lastError = "";
     private volatile String lastMode = "";
     private volatile String playlistUrl = "";
+    private volatile String lanUrl = "";
     private volatile boolean catalogRefreshPending;
 
     private CloudLiveService(Context context) {
@@ -156,16 +157,19 @@ final class CloudLiveService {
         } catch (RuntimeException failure) {
             error = failure.getClass().getSimpleName();
             AppLog.w(TAG, "Refresh crashed", failure);
+        } finally {
+            // Mirrors the Python service: the running flag is always cleared,
+            // even when refresh dies with an Error.
+            synchronized (CloudLiveService.this) {
+                refreshing = false;
+                lastRefreshAt = System.currentTimeMillis();
+                lastRefreshTookMs = lastRefreshAt - started;
+                lastChannels = channels;
+                lastError = error;
+                lastMode = force ? "force" : "incremental";
+            }
         }
         String after = target.playlistText();
-        synchronized (CloudLiveService.this) {
-            refreshing = false;
-            lastRefreshAt = System.currentTimeMillis();
-            lastRefreshTookMs = lastRefreshAt - started;
-            lastChannels = channels;
-            lastError = error;
-            lastMode = force ? "force" : "incremental";
-        }
         if (error.length() == 0 && !after.equals(before)) {
             catalogRefreshPending = true;
             CatalogListener listener = catalogListener;
@@ -201,7 +205,11 @@ final class CloudLiveService {
                     .put("lastRefreshChannels", lastChannels)
                     .put("lastRefreshTookMs", lastRefreshTookMs)
                     .put("lastRefreshMode", lastMode)
-                    .put("lastRefreshError", lastError);
+                    .put("lastRefreshError", lastError)
+                    .put("lanUrl", lanUrl)
+                    .put("directories", current == null ? 0 : current.directoryCount())
+                    .put("videos", current == null ? 0 : current.videoCount())
+                    .put("folders", current == null ? 0 : current.folderCount());
         } catch (JSONException impossible) {
             return new JSONObject();
         }
@@ -224,10 +232,11 @@ final class CloudLiveService {
                 daemonFactory("cloud-live-scheduler"));
         CloudLiveServer freshServer = new CloudLiveServer(this);
         try {
-            int port = freshServer.start(updated.port);
+            int port = freshServer.start(updated.port, updated.lanAccess);
             freshStore.setServerPort(port);
             freshStore.rebuildPlaylist();
             playlistUrl = "http://127.0.0.1:" + port + "/playlist.m3u";
+            lanUrl = updated.lanAccess ? detectLanUrl(port) : "";
         } catch (IOException error) {
             AppLog.w(TAG, "Unable to start pseudo-live server", error);
             lastError = "本地端口启动失败";
@@ -278,6 +287,56 @@ final class CloudLiveService {
         refreshing = false;
         store = null;
         playlistUrl = "";
+        lanUrl = "";
+    }
+
+    /** Human readable page for debugging from another machine on the LAN. */
+    String debugPage() {
+        StringBuilder builder = new StringBuilder();
+        builder.append("<!doctype html><html><head><meta charset=\"utf-8\">")
+                .append("<meta http-equiv=\"refresh\" content=\"3\">")
+                .append("<title>云盘直播状态</title></head>")
+                .append("<body style=\"font-family:monospace;padding:16px;line-height:1.5\">")
+                .append("<h3>云盘直播状态</h3><pre>")
+                .append(escapeHtml(statusJson().toString()))
+                .append("</pre><h3>播放列表</h3><pre>")
+                .append(escapeHtml(playlistText()))
+                .append("</pre></body></html>");
+        return builder.toString();
+    }
+
+    private static String escapeHtml(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    private static String detectLanUrl(int port) {
+        try {
+            java.util.Enumeration<java.net.NetworkInterface> interfaces =
+                    java.net.NetworkInterface.getNetworkInterfaces();
+            while (interfaces != null && interfaces.hasMoreElements()) {
+                java.net.NetworkInterface network = interfaces.nextElement();
+                if (!network.isUp() || network.isLoopback()) {
+                    continue;
+                }
+                java.util.Enumeration<java.net.InetAddress> addresses =
+                        network.getInetAddresses();
+                while (addresses.hasMoreElements()) {
+                    java.net.InetAddress address = addresses.nextElement();
+                    if (address instanceof java.net.Inet4Address
+                            && !address.isLoopbackAddress()) {
+                        String host = address.getHostAddress();
+                        if (host != null && host.length() > 0) {
+                            return "http://" + host + ":" + port + "/debug";
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return "";
     }
 
     private void shutdownExecutors() {

@@ -23,6 +23,7 @@ final class CloudLiveApi {
     private static final String LIST_URL = BASE + "/hcy/file/list";
     private static final String PREVIEW_URL = BASE + "/hcy/videoPreview/getPreviewInfo";
     private static final MediaType JSON = MediaType.parse("application/json;charset=UTF-8");
+    private static final int MAX_PAGES = 100;
 
     static final class Segment {
         final double duration;
@@ -86,6 +87,7 @@ final class CloudLiveApi {
                 .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
                 .writeTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+                .callTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
                 .build();
     }
 
@@ -93,6 +95,7 @@ final class CloudLiveApi {
     List<JSONObject> listFiles(String parentFileId) {
         List<JSONObject> items = new ArrayList<JSONObject>();
         String cursor = "";
+        int pages = 0;
         while (true) {
             try {
                 JSONObject pageInfo = new JSONObject()
@@ -125,8 +128,16 @@ final class CloudLiveApi {
                         }
                     }
                 }
-                cursor = data.optString("nextPageCursor", "");
-                if (cursor.length() == 0) {
+                String next = data.isNull("nextPageCursor")
+                        ? "" : data.optString("nextPageCursor", "").trim();
+                // A JSON null cursor used to arrive as the literal "null" on some
+                // Android versions, which made this loop request forever.
+                if (next.length() == 0 || "null".equalsIgnoreCase(next) || next.equals(cursor)) {
+                    return items;
+                }
+                cursor = next;
+                if (++pages > MAX_PAGES) {
+                    AppLog.w(TAG, "file/list stopped after " + MAX_PAGES + " pages");
                     return items;
                 }
             } catch (JSONException error) {

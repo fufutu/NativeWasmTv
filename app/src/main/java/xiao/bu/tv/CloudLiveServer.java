@@ -49,7 +49,7 @@ final class CloudLiveServer {
         return port;
     }
 
-    synchronized int start(int preferredPort) throws IOException {
+    synchronized int start(int preferredPort, boolean lanAccess) throws IOException {
         if (running) {
             return port;
         }
@@ -59,8 +59,9 @@ final class CloudLiveServer {
             try {
                 socket = new ServerSocket();
                 socket.setReuseAddress(true);
-                socket.bind(new InetSocketAddress(
-                        InetAddress.getByName("127.0.0.1"), candidate));
+                socket.bind(lanAccess
+                        ? new InetSocketAddress(candidate)
+                        : new InetSocketAddress(InetAddress.getByName("127.0.0.1"), candidate));
                 serverSocket = socket;
                 port = candidate;
                 running = true;
@@ -71,7 +72,8 @@ final class CloudLiveServer {
                 }, "cloud-live-accept");
                 acceptThread.setDaemon(true);
                 acceptThread.start();
-                AppLog.i(TAG, "Pseudo-live server listening on 127.0.0.1:" + port);
+                AppLog.i(TAG, "Pseudo-live server listening on "
+                        + (lanAccess ? "0.0.0.0:" : "127.0.0.1:") + port);
                 return port;
             } catch (IOException error) {
                 lastError = error;
@@ -178,6 +180,10 @@ final class CloudLiveServer {
             }
             sendJson(socket, 202, new JSONObject().put("status", "accepted")
                     .put("mode", force ? "force" : "incremental"));
+            return;
+        }
+        if ("/debug".equals(path)) {
+            send(socket, 200, "text/html; charset=utf-8", service.debugPage());
             return;
         }
         if ("/status".equals(path)) {

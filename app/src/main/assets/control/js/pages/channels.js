@@ -179,6 +179,7 @@ function saveCloudLive(refreshNow) {
     xTvgUrl: document.getElementById("cloudLiveEpg").value.trim(),
     authorization: document.getElementById("cloudLiveAuthorization").value.trim(),
     mcloudSign: document.getElementById("cloudLiveSign").value.trim(),
+    lanAccess: document.getElementById("cloudLiveLan").checked,
     refreshNow: refreshNow === true
   };
   cloudLiveSaving = true;
@@ -225,6 +226,7 @@ function renderCloudLive(cloud) {
   document.getElementById("cloudLiveWindow").value = cloud.windowSize || 8;
   document.getElementById("cloudLiveInterval").value = cloud.autoRefreshInterval || 600;
   document.getElementById("cloudLiveEpg").value = cloud.xTvgUrl || "";
+  document.getElementById("cloudLiveLan").checked = cloud.lanAccess !== false;
   document.getElementById("cloudLiveAuthorization").placeholder =
     cloud.authorizationSet ? "Authorization（已保存，留空不修改）" : "Authorization";
   document.getElementById("cloudLiveSign").placeholder =
@@ -244,6 +246,9 @@ function renderCloudLiveStatus(cloud) {
   } else {
     if (cloud.playlistUrl) parts.push("频道源：" + cloud.playlistUrl);
     parts.push("频道数：" + (status.channelCount || 0));
+    parts.push("目录 " + (status.directories || 0) +
+      " · 视频 " + (status.videos || 0) +
+      " · 文件夹 " + (status.folders || 0));
     if (status.refreshing) {
       parts.push("正在刷新…");
     } else if (status.lastRefreshAt) {
@@ -252,6 +257,7 @@ function renderCloudLiveStatus(cloud) {
         (status.lastRefreshTookMs ? " · " + Math.round(status.lastRefreshTookMs / 1000) + " 秒" : ""));
     }
     if (status.lastRefreshError) parts.push("错误：" + status.lastRefreshError);
+    if (status.lanUrl) parts.push("局域网状态：" + status.lanUrl);
   }
   document.getElementById("cloudLiveStatus").textContent = parts.join(" · ");
 }
