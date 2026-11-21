@@ -86,6 +86,34 @@
           />
         </div>
       </section>
+      <section class="config-epg-section">
+        <div class="section-head">
+          <h2>云盘直播</h2>
+          <input
+            id="cloudLiveEnabled"
+            class="source-toggle"
+            aria-label="云盘直播"
+            type="checkbox"
+            onchange="saveCloudLive()"
+          />
+        </div>
+        <div class="config-note">把个人云盘目录做成伪直播频道；启用后自动注册为频道源。</div>
+        <div id="cloudLiveForm" class="epg-source-list cloud-live-form">
+          <div class="epg-source-row"><input id="cloudLiveParent" type="text" placeholder="云盘根目录 fileId" /></div>
+          <div class="epg-source-row"><input id="cloudLiveAuthorization" type="text" placeholder="Authorization" /></div>
+          <div class="epg-source-row"><input id="cloudLiveSign" type="text" placeholder="mcloud-sign" /></div>
+          <div class="epg-source-row"><input id="cloudLivePort" type="number" inputmode="numeric" placeholder="本地端口，默认 18086" /></div>
+          <div class="epg-source-row"><input id="cloudLiveWindow" type="number" inputmode="numeric" placeholder="窗口分片数，默认 8" /></div>
+          <div class="epg-source-row"><input id="cloudLiveInterval" type="number" inputmode="numeric" placeholder="自动刷新秒数，默认 600" /></div>
+          <div class="epg-source-row"><input id="cloudLiveEpg" type="text" placeholder="节目单地址（可选）" /></div>
+        </div>
+        <div class="actions">
+          <button onclick="saveCloudLive(true)">保存并刷新</button
+          ><button onclick="refreshCloudLive()">立即刷新</button>
+        </div>
+        <div id="cloudLiveStatus" class="config-note" aria-live="polite"></div>
+        <div class="config-note">授权信息只保存在本机，不会上传。</div>
+      </section>
       <section class="browser-section">
         <div class="section-head"><h2>Ku9 脚本</h2></div>
         <div class="browser-settings-list">

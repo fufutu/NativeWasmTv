@@ -162,6 +162,87 @@ function saveAutoUpdateChannelList() {
   });
 }
 
+var cloudLiveSaving = false;
+function saveCloudLive(refreshNow) {
+  if (cloudLiveSaving) return;
+  var payload = {
+    enabled: document.getElementById("cloudLiveEnabled").checked,
+    parentFileId: document.getElementById("cloudLiveParent").value.trim(),
+    port: Number(document.getElementById("cloudLivePort").value) || 18086,
+    windowSize: Number(document.getElementById("cloudLiveWindow").value) || 8,
+    autoRefreshInterval: Number(document.getElementById("cloudLiveInterval").value) || 600,
+    xTvgUrl: document.getElementById("cloudLiveEpg").value.trim(),
+    authorization: document.getElementById("cloudLiveAuthorization").value.trim(),
+    mcloudSign: document.getElementById("cloudLiveSign").value.trim(),
+    refreshNow: refreshNow === true
+  };
+  cloudLiveSaving = true;
+  api("/api/settings", { cloudLive: payload }, function (error) {
+    cloudLiveSaving = false;
+    if (error) {
+      toast(error.message, true);
+      return;
+    }
+    document.getElementById("cloudLiveAuthorization").value = "";
+    document.getElementById("cloudLiveSign").value = "";
+    toast(refreshNow === true ? "已保存，正在刷新云盘频道" : "已保存云盘直播配置");
+    pollCloudLiveStatus(10);
+  });
+}
+function refreshCloudLive() {
+  api("/api/settings", { cloudLiveRefresh: true }, function (error) {
+    if (error) {
+      toast(error.message, true);
+      return;
+    }
+    toast("已开始刷新云盘频道");
+    pollCloudLiveStatus(10);
+  });
+}
+function pollCloudLiveStatus(remaining) {
+  if (remaining <= 0 || !pageActive) return;
+  setTimeout(function () {
+    if (!pageActive) return;
+    api("/api/state?view=channels", null, function (error, data) {
+      if (!error && data && data.settings && data.settings.cloudLive) {
+        renderCloudLiveStatus(data.settings.cloudLive);
+      }
+      pollCloudLiveStatus(remaining - 1);
+    });
+  }, 3000);
+}
+function renderCloudLive(cloud) {
+  if (!cloud || typeof cloud !== "object") cloud = {};
+  if (cloudLiveSaving) return;
+  document.getElementById("cloudLiveEnabled").checked = cloud.enabled === true;
+  document.getElementById("cloudLiveParent").value = cloud.parentFileId || "";
+  document.getElementById("cloudLivePort").value = cloud.port || 18086;
+  document.getElementById("cloudLiveWindow").value = cloud.windowSize || 8;
+  document.getElementById("cloudLiveInterval").value = cloud.autoRefreshInterval || 600;
+  document.getElementById("cloudLiveEpg").value = cloud.xTvgUrl || "";
+  document.getElementById("cloudLiveAuthorization").placeholder =
+    cloud.authorizationSet ? "Authorization（已保存，留空不修改）" : "Authorization";
+  document.getElementById("cloudLiveSign").placeholder =
+    cloud.mcloudSignSet ? "mcloud-sign（已保存，留空不修改）" : "mcloud-sign";
+  renderCloudLiveStatus(cloud);
+}
+function renderCloudLiveStatus(cloud) {
+  if (!cloud || typeof cloud !== "object") cloud = {};
+  var status = cloud.status || {};
+  var parts = [];
+  if (cloud.playlistUrl) parts.push("频道源：" + cloud.playlistUrl);
+  parts.push("频道数：" + (status.channelCount || 0));
+  if (status.refreshing) {
+    parts.push("正在刷新…");
+  } else if (status.lastRefreshAt) {
+    parts.push("上次刷新 " + new Date(status.lastRefreshAt).toLocaleTimeString() +
+      " · " + (status.lastRefreshChannels || 0) + " 个频道" +
+      (status.lastRefreshTookMs ? " · " + Math.round(status.lastRefreshTookMs / 1000) + " 秒" : ""));
+  }
+  if (status.lastRefreshError) parts.push("错误：" + status.lastRefreshError);
+  document.getElementById("cloudLiveStatus").textContent = parts.join(" · ");
+}
+
 function newPlaylistSource(name, location) {
   return {
     id: "source_" + Date.now() + "_" + Math.floor(Math.random() * 10000),
@@ -1412,6 +1493,7 @@ function renderPageState() {
   var s = state.settings;
   document.getElementById("epgEnabled").checked = s.epgEnabled !== false;
   document.getElementById("autoUpdateChannelList").checked = s.autoUpdateChannelList === true;
+  renderCloudLive(s.cloudLive || {});
   playlistSources = JSON.parse(JSON.stringify(s.playlistSources || []));
   channelBaseSources = channelSourceSnapshot(playlistSources);
   var configuredEpgUrls = Array.isArray(s.epgUrls)

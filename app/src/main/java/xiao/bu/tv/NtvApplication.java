@@ -49,6 +49,13 @@ public final class NtvApplication extends Application {
             HardwareDecoderInventory.warm(this);
             CrashReporting.startIfAllowed(this);
             ReceivedApkCleanup.initialize(this);
+            // Disk cache + loopback server; keep it off the main thread so a cold
+            // start stays responsive. The catalog refresh runs much later.
+            new Thread(new Runnable() {
+                @Override public void run() {
+                    CloudLiveService.get(NtvApplication.this).startIfEnabled();
+                }
+            }, "cloud-live-boot").start();
         }
     }
 

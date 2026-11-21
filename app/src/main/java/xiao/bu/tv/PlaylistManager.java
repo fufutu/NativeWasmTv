@@ -422,7 +422,7 @@ final class PlaylistManager {
             }
             fetched.add(new LoadedSource(source, bytes));
         }
-        if (enabledCount > 0 && availableCount < enabledCount) {
+        if (enabledCount > 0 && availableCount == 0) {
             String detail = warnings.isEmpty() ? "部分频道源无法读取" : warnings.get(0);
             throw new IOException("频道列表刷新未完成，已保留上次频道列表：" + detail);
         }
@@ -984,6 +984,39 @@ final class PlaylistManager {
             saveSources(migrated);
         }
         return migrated;
+    }
+
+    /**
+     * Adds or updates a manager owned source (for example the cloud-drive
+     * pseudo-live playlist) without disturbing the user's existing order.
+     * A null location keeps the stored address, which lets a feature disable
+     * its source without losing the URL.
+     */
+    synchronized boolean ensureSource(String id, String name, String location, boolean enabled)
+            throws IOException, JSONException {
+        List<Source> sources = getSources();
+        for (int index = 0; index < sources.size(); index++) {
+            Source existing = sources.get(index);
+            if (!existing.id.equals(id)) {
+                continue;
+            }
+            String nextLocation = location == null || location.length() == 0
+                    ? existing.location : location;
+            String nextName = name == null || name.length() == 0 ? existing.name : name;
+            if (nextLocation.equals(existing.location) && nextName.equals(existing.name)
+                    && enabled == existing.enabled) {
+                return false;
+            }
+            sources.set(index, new Source(id, nextName, nextLocation, enabled));
+            saveSources(sources);
+            return true;
+        }
+        if (location == null || location.length() == 0) {
+            return false;
+        }
+        sources.add(new Source(id, name, location, enabled));
+        saveSources(sources);
+        return true;
     }
 
     private List<Source> parseSources(JSONArray input) throws JSONException {

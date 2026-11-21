@@ -1257,6 +1257,8 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     private volatile boolean restoreReceiverChannelPending;
     private volatile int catalogGeneration;
     private final AtomicInteger catalogLoadGeneration = new AtomicInteger();
+    private int catalogRefreshRetryCount;
+    private static final int MAX_CATALOG_REFRESH_RETRIES = 3;
     private volatile String liveDelayMode;
     private volatile int subtitleSizePercent = 100;
     private volatile String subtitlePosition = SUBTITLE_POSITION_BOTTOM;
@@ -1881,8 +1883,23 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         root.postDelayed(startManagementServerTask, 900L);
         // Restore SQLite immediately; network refresh must not gate the cached list.
         loadCompleteCatalogInBackground(false);
+        CloudLiveService.get(this).setCatalogListener(new CloudLiveService.CatalogListener() {
+            @Override public void onCatalogChanged() {
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        if (!isFinishing() && playlistManager != null) {
+                            AppLog.i(TAG, "Cloud drive playlist changed; reloading channel list");
+                            loadCompleteCatalogInBackground(true);
+                        }
+                    }
+                });
+            }
+        });
         deferStartupMaintenance("catalog-refresh", () -> {
-            if (autoUpdateChannelList) loadCompleteCatalogInBackground(true);
+            if (autoUpdateChannelList
+                    || CloudLiveService.get(MainActivity.this).hasCatalogRefreshPending()) {
+                loadCompleteCatalogInBackground(true);
+            }
         }, 15000L);
         deferStartupMaintenance("epg", () -> refreshEpg(),15000L);
 
@@ -3894,6 +3911,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                     .put("recommendedEpgUrl", EpgManager.DEFAULT_URL)
                     .put("playlistUrl", playlistManager.getPlaylistUrl())
                     .put("playlistSources", playlistManager.getSourcesJson())
+                    .put("cloudLive", cloudLiveState())
                     .put("playlistGroups", playlistManager.getGroupSettingsJson())
                     .put("playlistGroupStats", playlistManager.getVisibleGroupStatsJson())
                     .put("mobileMergedPlaylist", playlistManager.hasMobileMerge())
@@ -6161,6 +6179,21 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                     .putBoolean(AUTO_UPDATE_CHANNEL_LIST, autoUpdateChannelList).apply();
             AppLog.i(TAG, "Automatic channel list update=" + autoUpdateChannelList);
         }
+        if (request.has("cloudLive")) {
+            JSONObject cloudLive = request.optJSONObject("cloudLive");
+            if (cloudLive != null) {
+                CloudLiveConfig.save(this, cloudLive);
+                CloudLiveService.get(this).restart();
+                AppLog.i(TAG, "Cloud drive pseudo-live settings updated");
+                if (cloudLive.optBoolean("refreshNow", false)) {
+                    CloudLiveService.get(this).requestRefresh(true);
+                }
+            }
+        }
+        if (request.optBoolean("cloudLiveRefresh", false)
+                && !CloudLiveService.get(this).requestRefresh(true)) {
+            throw new JSONException("云盘频道正在刷新中，请稍后再试");
+        }
         if (request.has("liveDelayMode")) {
             String rawMode = request.optString("liveDelayMode", LIVE_DELAY_STABLE);
             String requestedMode = sanitizeLiveDelayMode(rawMode);
@@ -6606,7 +6639,9 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                                     error);
                             groups = playlistManager.loadCached();
                         }
-                    } else if (autoUpdateChannelList && refreshSources) {
+                    } else if ((autoUpdateChannelList
+                            || CloudLiveService.get(MainActivity.this)
+                                    .hasCatalogRefreshPending()) && refreshSources) {
                         // Keep the local list visible while the replacement downloads.
                         groups = playlistManager.loadCached();
                         if (isFinishing() || loadGeneration != catalogLoadGeneration.get()
@@ -6616,13 +6651,18 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                         try {
                             groups = playlistManager.updateSources(
                                     playlistManager.getSourcesJson()).groups;
+                            catalogRefreshRetryCount = 0;
+                            CloudLiveService.get(MainActivity.this)
+                                    .clearCatalogRefreshPending();
                             AppLog.i(TAG, "Channel list refreshed automatically on cold start");
                         } catch (IOException error) {
                             AppLog.w(TAG, "Automatic channel list refresh failed; using cache", error);
+                            scheduleCatalogRefreshRetry();
                             return;
                         } catch (JSONException error) {
                             AppLog.w(TAG, "Automatic channel list source data is invalid; using cache",
                                     error);
+                            scheduleCatalogRefreshRetry();
                             return;
                         }
                     } else {
@@ -6652,6 +6692,46 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                 }
             }
         }, "channel-catalog-startup").start();
+    }
+
+    /**
+     * A cold start can run before Wi-Fi or the loopback source is ready. Retry a
+     * few times instead of silently keeping the cached list until the next boot.
+     */
+    private void scheduleCatalogRefreshRetry() {
+        if (isFinishing() || remoteCatalogUrl.length() > 0) {
+            return;
+        }
+        if (catalogRefreshRetryCount >= MAX_CATALOG_REFRESH_RETRIES) {
+            return;
+        }
+        long delay = 30000L << catalogRefreshRetryCount;
+        catalogRefreshRetryCount++;
+        AppLog.i(TAG, "Scheduling channel list refresh retry in " + (delay / 1000L) + "s");
+        root.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (isFinishing() || remoteCatalogUrl.length() > 0) {
+                    return;
+                }
+                if (!autoUpdateChannelList
+                        && !CloudLiveService.get(MainActivity.this).hasCatalogRefreshPending()) {
+                    return;
+                }
+                loadCompleteCatalogInBackground(true);
+            }
+        }, delay);
+    }
+
+    private JSONObject cloudLiveState() {
+        CloudLiveService service = CloudLiveService.get(this);
+        try {
+            JSONObject state = CloudLiveConfig.describe(CloudLiveConfig.load(this),
+                    service.playlistUrl());
+            state.put("status", service.statusJson());
+            return state;
+        } catch (JSONException error) {
+            return new JSONObject();
+        }
     }
 
     private IMediaPlayer pausePlaybackForCatalogRefresh() throws InterruptedException {
@@ -17970,6 +18050,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     @Override
     protected void onDestroy() {
         startupMaintenanceDestroyed=true;
+        CloudLiveService.get(this).setCatalogListener(null);
         if(root!=null)root.removeCallbacks(startManagementServerTask);
         if(channelAdapter!=null)channelAdapter.close();
         if(groupAdapter!=null)groupAdapter.close();
