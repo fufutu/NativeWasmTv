@@ -2,13 +2,16 @@ package xiao.bu.tv;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Environment;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.File;
+
 /**
- * Settings for the cloud-drive pseudo-live feature. The account credentials are
- * kept in the app's private preferences and never written to logs.
+ * Settings for the cloud-drive pseudo-live feature. Credentials stay in the
+ * app's private preferences and are never written to logs or shared storage.
  */
 final class CloudLiveConfig {
     static final String PREFERENCES = "cloud_live";
@@ -184,6 +187,47 @@ final class CloudLiveConfig {
             }
         }
         editor.apply();
+    }
+
+    /**
+     * Cache directory. Kept on shared storage so channels survive an uninstall;
+     * credentials never leave the app's private preferences.
+     */
+    static File storageRoot(Context context) {
+        File external = writableExternalRoot();
+        if (external != null) {
+            return external;
+        }
+        return new File(context.getFilesDir(), "cloudlive");
+    }
+
+    static String storageLabel(Context context) {
+        File external = writableExternalRoot();
+        if (external != null) {
+            return external.getAbsolutePath() + "（卸载后保留）";
+        }
+        return new File(context.getFilesDir(), "cloudlive").getAbsolutePath()
+                + "（内部存储，卸载后清除）";
+    }
+
+    private static File writableExternalRoot() {
+        try {
+            if (!Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState())) {
+                return null;
+            }
+            File root = new File(Environment.getExternalStorageDirectory(), "ntv/cloudlive");
+            if (!root.isDirectory() && !root.mkdirs()) {
+                return null;
+            }
+            File probe = new File(root, ".write-test");
+            if (!probe.exists() && !probe.createNewFile()) {
+                return null;
+            }
+            probe.delete();
+            return root;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     private static int clamp(int value, int min, int max) {

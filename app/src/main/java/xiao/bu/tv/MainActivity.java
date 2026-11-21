@@ -311,6 +311,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     private static final int NUMERIC_CHANNEL_MAX_DIGITS = 4;
     private final WebChannelInfo webChannelInfo = new WebChannelInfo();
     private static final int LOCAL_PLAYLIST_PERMISSION_REQUEST = 4201;
+    private static final int CLOUD_LIVE_STORAGE_PERMISSION_REQUEST = 4202;
 
     private static final int CAST_LOCAL_NETWORK_PERMISSION_REQUEST = 4205;
     private static final int WIFI_DIRECT_PERMISSION_REQUEST = 4206;
@@ -6191,6 +6192,11 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                 }
                 cloudLiveService.restart();
                 AppLog.i(TAG, "Cloud drive pseudo-live settings updated");
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        requestCloudLiveStoragePermission();
+                    }
+                });
                 if (cloudLive.optBoolean("refreshNow", false)) {
                     cloudLiveService.requestRefresh(true);
                 }
@@ -6434,6 +6440,19 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         throw new IOException("已请求本地文件读取权限，请允许后再次保存频道源");
     }
 
+    private void requestCloudLiveStoragePermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return;
+        }
+        if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        requestPermissions(new String[] { Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                        Manifest.permission.READ_EXTERNAL_STORAGE },
+                CLOUD_LIVE_STORAGE_PERMISSION_REQUEST);
+    }
+
     private void requestLocalPlaylistPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
                 && playlistManager.hasEnabledExternalLocalSource()
@@ -6448,6 +6467,17 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     public void onRequestPermissionsResult(int requestCode, String[] permissions,
             int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == CLOUD_LIVE_STORAGE_PERMISSION_REQUEST) {
+            if (grantResults.length > 0
+                    && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                new Thread(new Runnable() {
+                    @Override public void run() {
+                        CloudLiveService.get(MainActivity.this).restart();
+                    }
+                }, "cloud-live-storage").start();
+            }
+            return;
+        }
         if (requestCode == WIFI_DIRECT_PERMISSION_REQUEST) {
             wifiDirectPermissionRequestInFlight = false;
             boolean granted = grantResults.length > 0
@@ -6737,6 +6767,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         try {
             JSONObject state = CloudLiveConfig.describe(CloudLiveConfig.load(this),
                     service.playlistUrl());
+            state.put("storageDir", CloudLiveConfig.storageLabel(this));
             state.put("status", service.statusJson());
             return state;
         } catch (JSONException error) {

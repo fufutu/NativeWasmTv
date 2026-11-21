@@ -260,6 +260,7 @@ function renderCloudLiveStatus(cloud) {
     }
     if (status.lastRefreshError) parts.push("错误：" + status.lastRefreshError);
     if (status.lanUrl) parts.push("局域网状态：" + status.lanUrl);
+    if (cloud.storageDir) parts.push("缓存目录：" + cloud.storageDir);
   }
   document.getElementById("cloudLiveStatus").textContent = parts.join(" · ");
 }

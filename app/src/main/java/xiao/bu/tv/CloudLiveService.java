@@ -49,6 +49,7 @@ final class CloudLiveService {
     private volatile boolean catalogRefreshPending;
     private ExecutorService warmExecutor;
     private int refreshRetries;
+    private String appliedStorageRoot = "";
 
     private CloudLiveService(Context context) {
         this.context = context.getApplicationContext();
@@ -287,19 +288,21 @@ final class CloudLiveService {
     }
 
     private synchronized void applyConfig(CloudLiveConfig updated, boolean refreshAfterStart) {
+        File root = CloudLiveConfig.storageRoot(context);
         // Saving the same settings again must not tear down a running server
-        // (and kill an in-flight refresh).
-        if (updated.enabled && store != null && config != null && config.sameAs(updated)) {
+        // (and kill an in-flight refresh). A storage change does need a restart.
+        if (updated.enabled && store != null && config != null && config.sameAs(updated)
+                && root.getAbsolutePath().equals(appliedStorageRoot)) {
             return;
         }
         stopInternal();
+        appliedStorageRoot = root.getAbsolutePath();
         config = updated;
         if (!updated.enabled) {
             setSourceEnabled(false);
             lastError = "未启用";
             return;
         }
-        File root = new File(context.getFilesDir(), "cloudlive");
         CloudLiveApi api = new CloudLiveApi(updated);
         CloudLiveStore freshStore = new CloudLiveStore(root, updated, api);
         freshStore.loadFromDisk();
@@ -349,7 +352,7 @@ final class CloudLiveService {
                 }
             }
         }, updated.autoRefreshInterval, updated.autoRefreshInterval, TimeUnit.SECONDS);
-        if (!refreshAfterStart) {
+        if (!refreshAfterStart && freshStore.playlistText().length() > 0) {
             return;
         }
         // Same as the Python service: a fresh start always force-refreshes, so

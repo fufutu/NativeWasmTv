@@ -24,8 +24,7 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission
-        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
     <uses-feature
         android:name="android.software.leanback"
@@ -45,6 +44,7 @@
     <application
         android:name=".NtvApplication"
         android:allowBackup="false"
+        android:requestLegacyExternalStorage="true"
         android:banner="@drawable/tv_banner"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
