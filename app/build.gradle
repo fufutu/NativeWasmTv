@@ -66,7 +66,7 @@ android {
         }
     }
 
-    namespace 'cn.fufutu.tv'
+    namespace 'xiao.bu.tv'
     buildFeatures { buildConfig true }
     // The prebuilt native libraries are already stripped; preserve the audited binaries.
     packagingOptions { jniLibs { keepDebugSymbols += ['**/*.so'] } }
@@ -87,8 +87,7 @@ android {
         // Historical name retained for the JNI bridge and standalone trial checks.
         buildConfigField 'boolean', 'H5E_STREAMING_CHECKS', bundledH5eStreaming ? 'true' : 'false'
         // 【修改】默认包名改成了你的新包名
-        applicationId project.hasProperty('applicationIdOverride')
-                ? project.property('applicationIdOverride').toString() : 'cn.fufutu.tv'
+        applicationId 'cn.fufutu.tv'
         minSdkVersion 14
         // One 320x180 fallback for API 14-20; API 21+ keeps the original vector.
         vectorDrawables.generatedDensities = ['xhdpi']
