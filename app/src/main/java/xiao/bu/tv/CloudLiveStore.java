@@ -46,6 +46,7 @@ final class CloudLiveStore {
     private final File anchorsDir;
     private final File namesFile;
     private final File playlistFile;
+    private final File hitsFile;
     private final CloudLiveApi api;
     private final CloudLiveConfig config;
 
@@ -63,6 +64,7 @@ final class CloudLiveStore {
     private final Map<String, Long> segmentSavedAt = new HashMap<String, Long>();
     private final Map<String, Long> segmentFailUntil = new HashMap<String, Long>();
     private final Map<String, Double> anchors = new HashMap<String, Double>();
+    private final Map<String, Integer> hits = new HashMap<String, Integer>();
     private final Map<String, String> parentNames = new LinkedHashMap<String, String>();
     private final Map<String, Map<String, String>> secondNames =
             new HashMap<String, Map<String, String>>();
@@ -82,6 +84,7 @@ final class CloudLiveStore {
         anchorsDir = new File(root, "_anchors");
         namesFile = new File(root, "_names.json");
         playlistFile = new File(root, "playlist.m3u");
+        hitsFile = new File(root, "_hits.json");
     }
 
     void setServerPort(int port) {
@@ -124,6 +127,96 @@ final class CloudLiveStore {
         synchronized (cacheLock) {
             return folderChannels.size();
         }
+    }
+
+    /** Remembers that a channel was actually opened (used to warm popular ones). */
+    void recordHit(String channelId) {
+        if (channelId == null || channelId.length() == 0) {
+            return;
+        }
+        synchronized (cacheLock) {
+            Integer previous = hits.get(channelId);
+            hits.put(channelId, previous == null ? 1 : previous + 1);
+        }
+    }
+
+    void saveHits() {
+        JSONObject json = new JSONObject();
+        synchronized (cacheLock) {
+            for (Map.Entry<String, Integer> entry : hits.entrySet()) {
+                try {
+                    json.put(entry.getKey(), entry.getValue().intValue());
+                } catch (JSONException ignored) {
+                }
+            }
+        }
+        writeJson(hitsFile, json);
+    }
+
+    /**
+     * Video ids worth pre-fetching: most opened channels first, then playlist
+     * order. Folder channels contribute their first episodes.
+     */
+    List<String> warmupTargets(int maxVideos) {
+        final Map<String, Integer> snapshot;
+        synchronized (cacheLock) {
+            snapshot = new HashMap<String, Integer>(hits);
+        }
+        List<String> order = playlistChannelIds();
+        java.util.Collections.sort(order, new java.util.Comparator<String>() {
+            @Override public int compare(String left, String right) {
+                Integer a = snapshot.get(left);
+                Integer b = snapshot.get(right);
+                int leftHits = a == null ? 0 : a.intValue();
+                int rightHits = b == null ? 0 : b.intValue();
+                if (leftHits == rightHits) {
+                    return 0;
+                }
+                return rightHits - leftHits;
+            }
+        });
+        List<String> targets = new ArrayList<String>();
+        for (String id : order) {
+            if (targets.size() >= maxVideos) {
+                break;
+            }
+            if (isVideoChannel(id)) {
+                targets.add(id);
+                continue;
+            }
+            CloudLiveApi.FolderMeta meta = folderMeta(id);
+            if (meta == null) {
+                continue;
+            }
+            int count = Math.min(3, meta.episodes.size());
+            for (int i = 0; i < count && targets.size() < maxVideos; i++) {
+                targets.add(meta.episodes.get(i).fileId);
+            }
+        }
+        return targets;
+    }
+
+    private boolean isVideoChannel(String channelId) {
+        synchronized (cacheLock) {
+            return videoChannels.contains(channelId);
+        }
+    }
+
+    private List<String> playlistChannelIds() {
+        List<String> ids = new ArrayList<String>();
+        String[] lines = playlistText.split("\n");
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (!trimmed.startsWith("http") || !trimmed.endsWith(".m3u8")) {
+                continue;
+            }
+            int slash = trimmed.lastIndexOf('/');
+            if (slash < 0 || slash + 1 >= trimmed.length() - 5) {
+                continue;
+            }
+            ids.add(trimmed.substring(slash + 1, trimmed.length() - 5));
+        }
+        return ids;
     }
 
     void loadFromDisk() {
@@ -193,8 +286,16 @@ final class CloudLiveStore {
         if (saved != null) {
             playlistText = saved;
         }
+        JSONObject hitsJson = readJson(hitsFile);
+        if (hitsJson != null) {
+            for (java.util.Iterator<String> it = hitsJson.keys(); it.hasNext(); ) {
+                String key = it.next();
+                hits.put(key, hitsJson.optInt(key, 0));
+            }
+        }
         AppLog.i(TAG, "Loaded cache: " + dirChildren.size() + " directories, "
-                + folderMeta.size() + " folders, " + videoChannels.size() + " videos");
+                + folderMeta.size() + " folders, " + videoChannels.size() + " videos, "
+                + hits.size() + " hit records");
     }
 
     List<DirChild> dirChildren(String dirId) {

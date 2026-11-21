@@ -25,6 +25,7 @@ final class CloudLiveConfig {
     private static final String REFRESH_TOKEN = "refresh_token";
     private static final String DEBUG_LOG = "debug_log";
     private static final String LAN_ACCESS = "lan_access";
+    private static final String WARMUP_ENABLED = "warmup_enabled";
 
     final boolean enabled;
     final int port;
@@ -37,10 +38,11 @@ final class CloudLiveConfig {
     final String refreshToken;
     final boolean debugLog;
     final boolean lanAccess;
+    final boolean warmupEnabled;
 
     private CloudLiveConfig(boolean enabled, int port, int windowSize, String parentFileId,
             String authorization, String mcloudSign, int autoRefreshInterval, String xTvgUrl,
-            String refreshToken, boolean debugLog, boolean lanAccess) {
+            String refreshToken, boolean debugLog, boolean lanAccess, boolean warmupEnabled) {
         this.enabled = enabled;
         this.port = port;
         this.windowSize = windowSize;
@@ -52,6 +54,7 @@ final class CloudLiveConfig {
         this.refreshToken = refreshToken;
         this.debugLog = debugLog;
         this.lanAccess = lanAccess;
+        this.warmupEnabled = warmupEnabled;
     }
 
     static CloudLiveConfig load(Context context) {
@@ -68,11 +71,28 @@ final class CloudLiveConfig {
                 preferences.getString(X_TVG_URL, "http://epg.51zmt.top:8000/e.xml").trim(),
                 preferences.getString(REFRESH_TOKEN, "").trim(),
                 preferences.getBoolean(DEBUG_LOG, true),
-                preferences.getBoolean(LAN_ACCESS, true));
+                preferences.getBoolean(LAN_ACCESS, true),
+                preferences.getBoolean(WARMUP_ENABLED, false));
     }
 
     boolean hasCredentials() {
         return authorization.length() > 0 && parentFileId.length() > 0;
+    }
+
+    boolean sameAs(CloudLiveConfig other) {
+        return other != null
+                && enabled == other.enabled
+                && port == other.port
+                && windowSize == other.windowSize
+                && parentFileId.equals(other.parentFileId)
+                && authorization.equals(other.authorization)
+                && mcloudSign.equals(other.mcloudSign)
+                && autoRefreshInterval == other.autoRefreshInterval
+                && xTvgUrl.equals(other.xTvgUrl)
+                && refreshToken.equals(other.refreshToken)
+                && debugLog == other.debugLog
+                && lanAccess == other.lanAccess
+                && warmupEnabled == other.warmupEnabled;
     }
 
     static JSONObject describe(CloudLiveConfig config, String playlistUrl) throws JSONException {
@@ -88,6 +108,7 @@ final class CloudLiveConfig {
                 .put("refreshTokenSet", config.refreshToken.length() > 0)
                 .put("debugLog", config.debugLog)
                 .put("lanAccess", config.lanAccess)
+                .put("warmupEnabled", config.warmupEnabled)
                 .put("playlistUrl", playlistUrl == null ? "" : playlistUrl);
     }
 
@@ -128,6 +149,9 @@ final class CloudLiveConfig {
         }
         if (request.has("lanAccess")) {
             editor.putBoolean(LAN_ACCESS, request.optBoolean("lanAccess", true));
+        }
+        if (request.has("warmupEnabled")) {
+            editor.putBoolean(WARMUP_ENABLED, request.optBoolean("warmupEnabled", false));
         }
         if (request.has("xTvgUrl")) {
             editor.putString(X_TVG_URL, request.optString("xTvgUrl", "").trim());

@@ -7,6 +7,7 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -23,6 +24,7 @@ final class CloudLiveService {
     private static final String TAG = "CloudLive";
     private static final String SOURCE_ID = "cloudlive";
     private static final String SOURCE_NAME = "云盘直播";
+    private static final int WARMUP_LIMIT = 40;
     private static CloudLiveService instance;
 
     interface CatalogListener {
@@ -45,6 +47,8 @@ final class CloudLiveService {
     private volatile String playlistUrl = "";
     private volatile String lanUrl = "";
     private volatile boolean catalogRefreshPending;
+    private ExecutorService warmExecutor;
+    private int refreshRetries;
 
     private CloudLiveService(Context context) {
         this.context = context.getApplicationContext();
@@ -63,12 +67,12 @@ final class CloudLiveService {
 
     /** Applies the current settings, starting or stopping the server as needed. */
     synchronized void startIfEnabled() {
-        applyConfig(CloudLiveConfig.load(context));
+        applyConfig(CloudLiveConfig.load(context), true);
     }
 
     /** Re-reads settings after the web page saved new values. */
     synchronized void restart() {
-        applyConfig(CloudLiveConfig.load(context));
+        applyConfig(CloudLiveConfig.load(context), false);
     }
 
     CloudLiveConfig config() {
@@ -109,10 +113,19 @@ final class CloudLiveService {
             if (meta == null || meta.episodes.isEmpty()) {
                 return null;
             }
-            return CloudLiveTimeline.folder(current, executor(), channelId, meta, now,
-                    settings.windowSize, reset);
+            CloudLiveTimeline.Window window = CloudLiveTimeline.folder(current,
+                    executor(), channelId, meta, now, settings.windowSize, reset);
+            if (window != null && settings.warmupEnabled) {
+                current.recordHit(channelId);
+            }
+            return window;
         }
-        return CloudLiveTimeline.single(current, channelId, now, settings.windowSize, reset);
+        CloudLiveTimeline.Window window = CloudLiveTimeline.single(current, channelId, now,
+                settings.windowSize, reset);
+        if (window != null && settings.warmupEnabled) {
+            current.recordHit(channelId);
+        }
+        return window;
     }
 
     /** Returns false when a refresh is already running or the service is stopped. */
@@ -177,6 +190,64 @@ final class CloudLiveService {
                 listener.onCatalogChanged();
             }
         }
+        if (error.length() == 0) {
+            refreshRetries = 0;
+            scheduleWarmup();
+        } else if (refreshRetries < 2) {
+            // Network may not be up yet right after boot; retry shortly.
+            refreshRetries++;
+            final int attempt = refreshRetries;
+            final ScheduledExecutorService scheduled = scheduler;
+            if (scheduled != null) {
+                try {
+                    scheduled.schedule(new Runnable() {
+                        @Override public void run() {
+                            requestRefresh(true);
+                        }
+                    }, 30L * attempt, TimeUnit.SECONDS);
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
+    }
+
+    /**
+     * Pre-fetches segment lists for the channels people open most (playlist
+     * order when there is no history), so the first click does not wait for
+     * the cloud API.
+     */
+    private void scheduleWarmup() {
+        CloudLiveConfig settings = config;
+        if (settings == null || !settings.warmupEnabled) {
+            return;
+        }
+        final CloudLiveStore target = store;
+        final ExecutorService executor = warmExecutor;
+        if (target == null || executor == null) {
+            return;
+        }
+        try {
+            executor.execute(new Runnable() {
+                @Override public void run() {
+                    try {
+                        List<String> ids = target.warmupTargets(WARMUP_LIMIT);
+                        for (String id : ids) {
+                            if (store != target) {
+                                return;
+                            }
+                            if (target.cachedSegments(id) == null) {
+                                target.ensureSegments(id);
+                            }
+                        }
+                        target.saveHits();
+                    } catch (RuntimeException error) {
+                        AppLog.w(TAG, "Warmup failed", error);
+                    }
+                }
+            });
+        } catch (RuntimeException rejected) {
+            AppLog.w(TAG, "Unable to schedule warmup");
+        }
     }
 
     /** True when the local server is up and the catalog is loaded. */
@@ -215,7 +286,12 @@ final class CloudLiveService {
         }
     }
 
-    private synchronized void applyConfig(CloudLiveConfig updated) {
+    private synchronized void applyConfig(CloudLiveConfig updated, boolean refreshAfterStart) {
+        // Saving the same settings again must not tear down a running server
+        // (and kill an in-flight refresh).
+        if (updated.enabled && store != null && config != null && config.sameAs(updated)) {
+            return;
+        }
         stopInternal();
         config = updated;
         if (!updated.enabled) {
@@ -228,6 +304,7 @@ final class CloudLiveService {
         CloudLiveStore freshStore = new CloudLiveStore(root, updated, api);
         freshStore.loadFromDisk();
         worker = Executors.newFixedThreadPool(2, daemonFactory("cloud-live-worker"));
+        warmExecutor = Executors.newSingleThreadExecutor(daemonFactory("cloud-live-warm"));
         scheduler = Executors.newSingleThreadScheduledExecutor(
                 daemonFactory("cloud-live-scheduler"));
         CloudLiveServer freshServer = new CloudLiveServer(this);
@@ -272,9 +349,12 @@ final class CloudLiveService {
                 }
             }
         }, updated.autoRefreshInterval, updated.autoRefreshInterval, TimeUnit.SECONDS);
-        if (freshStore.playlistText().length() == 0) {
-            requestRefresh(true);
+        if (!refreshAfterStart) {
+            return;
         }
+        // Same as the Python service: a fresh start always force-refreshes, so
+        // videos added while the TV was off show up within seconds.
+        requestRefresh(true);
     }
 
     private synchronized void stopInternal() {
@@ -285,6 +365,7 @@ final class CloudLiveService {
         }
         shutdownExecutors();
         refreshing = false;
+        refreshRetries = 0;
         store = null;
         playlistUrl = "";
         lanUrl = "";
@@ -349,6 +430,11 @@ final class CloudLiveService {
         worker = null;
         if (currentWorker != null) {
             currentWorker.shutdownNow();
+        }
+        ExecutorService currentWarm = warmExecutor;
+        warmExecutor = null;
+        if (currentWarm != null) {
+            currentWarm.shutdownNow();
         }
     }
 

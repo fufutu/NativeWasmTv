@@ -180,6 +180,7 @@ function saveCloudLive(refreshNow) {
     authorization: document.getElementById("cloudLiveAuthorization").value.trim(),
     mcloudSign: document.getElementById("cloudLiveSign").value.trim(),
     lanAccess: document.getElementById("cloudLiveLan").checked,
+    warmupEnabled: document.getElementById("cloudLiveWarmup").checked,
     refreshNow: refreshNow === true
   };
   cloudLiveSaving = true;
@@ -227,6 +228,7 @@ function renderCloudLive(cloud) {
   document.getElementById("cloudLiveInterval").value = cloud.autoRefreshInterval || 600;
   document.getElementById("cloudLiveEpg").value = cloud.xTvgUrl || "";
   document.getElementById("cloudLiveLan").checked = cloud.lanAccess !== false;
+  document.getElementById("cloudLiveWarmup").checked = cloud.warmupEnabled === true;
   document.getElementById("cloudLiveAuthorization").placeholder =
     cloud.authorizationSet ? "Authorization（已保存，留空不修改）" : "Authorization";
   document.getElementById("cloudLiveSign").placeholder =

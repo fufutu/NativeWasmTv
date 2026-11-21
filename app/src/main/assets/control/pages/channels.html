@@ -91,7 +91,7 @@
           <h2>云盘直播</h2>
           <input
             id="cloudLiveEnabled"
-            class="source-toggle"
+            class="source-toggle cloud-live-switch"
             aria-label="云盘直播"
             type="checkbox"
             onchange="saveCloudLive()"
@@ -115,8 +115,22 @@
             </div>
             <input
               id="cloudLiveLan"
-              class="source-toggle"
+              class="source-toggle cloud-live-switch"
               aria-label="允许局域网访问"
+              type="checkbox"
+              checked
+              onchange="saveCloudLive()"
+            />
+          </div>
+          <div class="browser-setting-row">
+            <div class="browser-setting-copy">
+              <b>后台预热频道</b
+              ><span>刷新后按热度提前拉取分片，默认关闭</span>
+            </div>
+            <input
+              id="cloudLiveWarmup"
+              class="source-toggle cloud-live-switch"
+              aria-label="后台预热频道"
               type="checkbox"
               onchange="saveCloudLive()"
             />
