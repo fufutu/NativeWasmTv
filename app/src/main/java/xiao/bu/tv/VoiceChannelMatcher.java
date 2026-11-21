@@ -19,15 +19,36 @@ final class VoiceChannelMatcher {
         final String groupName;
         final String channelName;
         final double score;
+        final int episodeOffset;
+        final int hits;
 
         Candidate(int group, int channel, String groupName, String channelName,
-                double score) {
+                double score, int episodeOffset, int hits) {
             this.group = group;
             this.channel = channel;
             this.groupName = groupName;
             this.channelName = channelName;
             this.score = score;
+            this.episodeOffset = episodeOffset;
+            this.hits = hits;
         }
+    }
+
+    /** Extra alias text (already normalized) and an optional season start offset. */
+    static final class Alias {
+        final String text;
+        final int episodeOffset;
+
+        Alias(String text, int episodeOffset) {
+            this.text = text;
+            this.episodeOffset = episodeOffset;
+        }
+    }
+
+    /** Optional catalog-specific signals such as cloud-drive season aliases. */
+    interface ExtraInfo {
+        List<Alias> aliases(int groupIndex, int channelIndex, Channel channel);
+        int hits(int groupIndex, int channelIndex, Channel channel);
     }
 
     static final class Result {
@@ -65,6 +86,10 @@ final class VoiceChannelMatcher {
     }
 
     static Result match(String text, ChannelCatalog.Group[] groups) {
+        return match(text, groups, null);
+    }
+
+    static Result match(String text, ChannelCatalog.Group[] groups, ExtraInfo extra) {
         String query = normalize(text);
         List<Candidate> candidates = new ArrayList<Candidate>();
         if (query.length() == 0 || groups == null) {
@@ -87,26 +112,106 @@ final class VoiceChannelMatcher {
                 if (name.length() == 0) {
                     continue;
                 }
-                double score = score(query, name, channel.name);
-                if (score < 0.34) {
+                // Score the visible name, the group+name combination (so
+                // "绝望主妇 第一季" can resolve a folder channel), and any extra
+                // season aliases supplied by the catalog source.
+                List<Alias> targets = new ArrayList<Alias>();
+                targets.add(new Alias(name, -1));
+                String combined = normalize(combine(group.title, channel.name));
+                if (combined.length() > 0 && !combined.equals(name)) {
+                    targets.add(new Alias(combined, -1));
+                }
+                if (extra != null) {
+                    List<Alias> more = extra.aliases(groupIndex, channelIndex, channel);
+                    if (more != null) {
+                        for (Alias alias : more) {
+                            if (alias == null || alias.text == null) {
+                                continue;
+                            }
+                            String normalized = normalize(alias.text);
+                            if (normalized.length() > 0) {
+                                targets.add(new Alias(normalized, alias.episodeOffset));
+                            }
+                        }
+                    }
+                }
+                double bestScore = 0.0;
+                int bestOffset = -1;
+                for (Alias target : targets) {
+                    double score = score(query, target.text, channel.name);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestOffset = target.episodeOffset;
+                    }
+                }
+                if (bestScore < 0.34) {
                     continue;
                 }
+                int hits = extra == null ? 0
+                        : extra.hits(groupIndex, channelIndex, channel);
+                // Popular channels get a small boost and win ties, so "CCTV"
+                // spoken ambiguously leans toward the one actually watched.
+                bestScore = Math.min(1.0, bestScore + Math.min(0.03, hits * 0.003));
                 candidates.add(new Candidate(groupIndex, channelIndex, group.title,
-                        channel.name, score));
+                        channel.name, bestScore, bestOffset, hits));
             }
         }
         Collections.sort(candidates, new Comparator<Candidate>() {
             @Override public int compare(Candidate left, Candidate right) {
-                if (left.score == right.score) {
-                    return left.channelName.length() - right.channelName.length();
+                if (left.score != right.score) {
+                    return Double.compare(right.score, left.score);
                 }
-                return Double.compare(right.score, left.score);
+                if (left.hits != right.hits) {
+                    return right.hits - left.hits;
+                }
+                return left.channelName.length() - right.channelName.length();
             }
         });
         if (candidates.size() > 3) {
             return new Result(new ArrayList<Candidate>(candidates.subList(0, 3)));
         }
         return new Result(candidates);
+    }
+
+    private static String combine(String groupTitle, String channelName) {
+        StringBuilder builder = new StringBuilder();
+        if (groupTitle != null && groupTitle.length() > 0) {
+            builder.append(groupTitle).append(' ');
+        }
+        if (channelName != null) {
+            builder.append(channelName);
+        }
+        return builder.toString();
+    }
+
+    /** Extracts a 1-based season number from "S1", "Season 2", "第三季", etc. */
+    static int seasonNumber(String label) {
+        if (label == null) {
+            return 0;
+        }
+        String value = normalize(label);
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?:^|[^a-z0-9])(?:s|season)\\s*(\\d{1,2})").matcher(value);
+        if (matcher.find()) {
+            return parseSmallInt(matcher.group(1));
+        }
+        matcher = java.util.regex.Pattern.compile("第\\s*(\\d{1,2})\\s*季").matcher(value);
+        if (matcher.find()) {
+            return parseSmallInt(matcher.group(1));
+        }
+        matcher = java.util.regex.Pattern.compile("(\\d{1,2})\\s*季").matcher(value);
+        if (matcher.find()) {
+            return parseSmallInt(matcher.group(1));
+        }
+        return 0;
+    }
+
+    private static int parseSmallInt(String value) {
+        try {
+            return Math.max(0, Integer.parseInt(value));
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
     }
 
     private static double score(String query, String name, String rawName) {

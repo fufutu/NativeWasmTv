@@ -49,11 +49,18 @@ final class CloudLiveApi {
         final String fileId;
         final String name;
         final double duration;
+        /** Immediate season folder label ("S1", "第二季"), empty for direct videos. */
+        final String season;
 
         Episode(String fileId, String name, double duration) {
+            this(fileId, name, duration, "");
+        }
+
+        Episode(String fileId, String name, double duration, String season) {
             this.fileId = fileId;
             this.name = name;
             this.duration = duration;
+            this.season = season == null ? "" : season;
         }
     }
 
@@ -221,8 +228,15 @@ final class CloudLiveApi {
     }
 
     FolderMeta fetchFolderMeta(String folderId, String folderName, int depth) {
+        return fetchFolderMeta(folderId, folderName, depth, "");
+    }
+
+    private FolderMeta fetchFolderMeta(String folderId, String folderName, int depth, String season) {
         if (depth > 8) {
             return null;
+        }
+        if (season == null) {
+            season = "";
         }
         List<JSONObject> items = listFiles(folderId);
         if (items == null) {
@@ -232,8 +246,11 @@ final class CloudLiveApi {
         for (JSONObject item : items) {
             String type = item.optString("type", "");
             if ("folder".equals(type)) {
+                // Keep the first-level subfolder as the season label so deeper
+                // nesting (e.g. 绝望主妇/S1/EP01/...) still resolves to "S1".
+                String childSeason = season.length() == 0 ? item.optString("name", "") : season;
                 FolderMeta child = fetchFolderMeta(item.optString("fileId", ""),
-                        item.optString("name", ""), depth + 1);
+                        item.optString("name", ""), depth + 1, childSeason);
                 if (child != null) {
                     episodes.addAll(child.episodes);
                 }
@@ -242,7 +259,7 @@ final class CloudLiveApi {
                 double duration = mediaMeta == null ? 0
                         : mediaMeta.optDouble("duration", 0);
                 episodes.add(new Episode(item.optString("fileId", ""),
-                        item.optString("name", ""), Math.max(0, duration)));
+                        item.optString("name", ""), Math.max(0, duration), season));
             }
         }
         return new FolderMeta(folderId, folderName, episodes);

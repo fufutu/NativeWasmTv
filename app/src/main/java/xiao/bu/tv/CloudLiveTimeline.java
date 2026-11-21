@@ -44,7 +44,8 @@ final class CloudLiveTimeline {
     }
 
     static Window folder(CloudLiveStore store, Executor executor, String folderId,
-            CloudLiveApi.FolderMeta meta, double now, int windowSize, boolean reset) {
+            CloudLiveApi.FolderMeta meta, double now, int windowSize, boolean reset,
+            int startEpisode) {
         List<CloudLiveApi.Episode> episodes = meta.episodes;
         if (episodes == null || episodes.isEmpty() || meta.totalDuration <= 0) {
             return null;
@@ -56,6 +57,12 @@ final class CloudLiveTimeline {
         int episodeIndex = bisectRight(meta.offsets, offset) - 1;
         episodeIndex = Math.max(0, Math.min(episodeIndex, episodes.size() - 1));
         double localOffset = offset - meta.offsets[episodeIndex];
+        if (startEpisode >= 0 && startEpisode < episodes.size()) {
+            // Voice-directed season playback: start at the first segment of the
+            // requested episode, then continue like a normal pseudo-live stream.
+            episodeIndex = startEpisode;
+            localOffset = 0;
+        }
 
         CloudLiveApi.Episode current = episodes.get(episodeIndex);
         CloudLiveApi.Segments currentSegments = store.ensureSegments(current.fileId);

@@ -8,6 +8,7 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -108,6 +109,24 @@ final class CloudLiveService {
         catalogRefreshPending = false;
     }
 
+    int hits(String channelId) {
+        CloudLiveStore current = store;
+        return current == null ? 0 : current.hits(channelId);
+    }
+
+    List<CloudLiveStore.SeasonRange> seasons(String channelId) {
+        CloudLiveStore current = store;
+        return current == null ? new ArrayList<CloudLiveStore.SeasonRange>()
+                : current.seasons(channelId);
+    }
+
+    void requestStartEpisode(String channelId, int episodeIndex) {
+        CloudLiveStore current = store;
+        if (current != null) {
+            current.requestStartEpisode(channelId, episodeIndex);
+        }
+    }
+
     CloudLiveTimeline.Window buildWindow(String channelId, boolean reset) {
         CloudLiveStore current = store;
         CloudLiveConfig settings = config;
@@ -120,8 +139,15 @@ final class CloudLiveService {
             if (meta == null || meta.episodes.isEmpty()) {
                 return null;
             }
+            int startEpisode = current.consumeStartEpisode(channelId);
+            if (startEpisode >= 0) {
+                // A voice command requested a specific season: begin the pseudo-live
+                // stream at that episode and reset the anchor so it advances from there.
+                reset = true;
+            }
             CloudLiveTimeline.Window window = CloudLiveTimeline.folder(current,
-                    executor(), channelId, meta, now, settings.windowSize, reset);
+                    executor(), channelId, meta, now, settings.windowSize, reset,
+                    startEpisode);
             if (window != null) {
                 recordChannelOpen(current, channelId, reset);
             }

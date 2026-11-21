@@ -915,6 +915,17 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     private int userScriptInstallGeneration;
     private FrameLayout voiceSwitchOverlay;
     private int voiceSwitchGeneration;
+    private final VoiceChannelMatcher.ExtraInfo voiceExtraInfo =
+            new VoiceChannelMatcher.ExtraInfo() {
+                @Override public List<VoiceChannelMatcher.Alias> aliases(int groupIndex,
+                        int channelIndex, Channel channel) {
+                    return voiceSeasonAliases(channel);
+                }
+                @Override public int hits(int groupIndex, int channelIndex,
+                        Channel channel) {
+                    return voiceChannelHits(channel);
+                }
+            };
 
     private String directHttpMediaUrl;
     private int directHlsFallbackRequestId = -1;
@@ -4076,7 +4087,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             throw new ControlRequestException(400, "缺少语音识别文本");
         }
         VoiceChannelMatcher.Result result = VoiceChannelMatcher.match(text,
-                ChannelCatalog.GROUPS);
+                ChannelCatalog.GROUPS, voiceExtraInfo);
         if (result.isEmpty()) {
             throw new ControlRequestException(404, "没有找到匹配的频道");
         }
@@ -4087,7 +4098,9 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                     .put("group", candidate.groupName)
                     .put("groupIndex", candidate.group)
                     .put("channelIndex", candidate.channel)
-                    .put("score", Math.round(candidate.score * 100) / 100.0d));
+                    .put("score", Math.round(candidate.score * 100) / 100.0d)
+                    .put("hits", candidate.hits)
+                    .put("episodeOffset", candidate.episodeOffset));
         }
         if (!request.optBoolean("play", true)) {
             return new JSONObject().put("ok", true).put("action", "candidates")
@@ -4107,6 +4120,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     }
 
     private void switchToVoiceChannel(final VoiceChannelMatcher.Candidate candidate) {
+        applyVoiceSeasonStart(candidate);
         try {
             handleWebControl(new JSONObject().put("action", "play")
                     .put("group", candidate.group)
@@ -4121,6 +4135,90 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         }
     }
 
+    /** Extracts the cloud-drive channel file id from a pseudo-live m3u8 URL. */
+    private static String cloudChannelId(Channel channel) {
+        if (channel == null || channel.url == null) {
+            return null;
+        }
+        String url = channel.url;
+        int query = url.indexOf('?');
+        if (query >= 0) {
+            url = url.substring(0, query);
+        }
+        int slash = url.lastIndexOf('/');
+        String file = slash >= 0 ? url.substring(slash + 1) : url;
+        if (file.endsWith(".m3u8")) {
+            file = file.substring(0, file.length() - ".m3u8".length());
+        }
+        return file.length() == 0 ? null : file;
+    }
+
+    private List<VoiceChannelMatcher.Alias> voiceSeasonAliases(Channel channel) {
+        List<VoiceChannelMatcher.Alias> result = new ArrayList<VoiceChannelMatcher.Alias>();
+        String channelId = cloudChannelId(channel);
+        if (channelId == null) {
+            return result;
+        }
+        CloudLiveService service = CloudLiveService.get(MainActivity.this);
+        if (service == null) {
+            return result;
+        }
+        List<CloudLiveStore.SeasonRange> seasons = service.seasons(channelId);
+        if (seasons == null || seasons.isEmpty()) {
+            return result;
+        }
+        String base = channel.name == null ? "" : channel.name.trim();
+        for (CloudLiveStore.SeasonRange season : seasons) {
+            int number = VoiceChannelMatcher.seasonNumber(season.name);
+            if (number <= 0) {
+                result.add(new VoiceChannelMatcher.Alias(base + " " + season.name,
+                        season.start));
+                continue;
+            }
+            result.add(new VoiceChannelMatcher.Alias(base + "第" + number + "季",
+                    season.start));
+            result.add(new VoiceChannelMatcher.Alias(base + " s" + number, season.start));
+            result.add(new VoiceChannelMatcher.Alias(base + " " + season.name,
+                    season.start));
+            result.add(new VoiceChannelMatcher.Alias(base + " 第" + number + "部",
+                    season.start));
+        }
+        return result;
+    }
+
+    private int voiceChannelHits(Channel channel) {
+        String channelId = cloudChannelId(channel);
+        if (channelId == null) {
+            return 0;
+        }
+        CloudLiveService service = CloudLiveService.get(MainActivity.this);
+        return service == null ? 0 : service.hits(channelId);
+    }
+
+    /** Tells the pseudo-live server to begin the matched channel at a season offset. */
+    private void applyVoiceSeasonStart(VoiceChannelMatcher.Candidate candidate) {
+        if (candidate == null || candidate.episodeOffset < 0) {
+            return;
+        }
+        ChannelCatalog.Group[] groups = ChannelCatalog.GROUPS;
+        if (groups == null || candidate.group < 0 || candidate.group >= groups.length) {
+            return;
+        }
+        ChannelCatalog.Group group = groups[candidate.group];
+        if (group == null || group.channels == null || candidate.channel < 0
+                || candidate.channel >= group.channels.length) {
+            return;
+        }
+        String channelId = cloudChannelId(group.channels[candidate.channel]);
+        if (channelId == null) {
+            return;
+        }
+        CloudLiveService service = CloudLiveService.get(MainActivity.this);
+        if (service != null) {
+            service.requestStartEpisode(channelId, candidate.episodeOffset);
+        }
+    }
+
     private void showVoiceChannelCandidates(final String text,
             final List<VoiceChannelMatcher.Candidate> candidates) {
         runOnUiThread(() -> {
@@ -4132,8 +4230,14 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             overlay.setClickable(true);
             overlay.setFocusable(true);
             overlay.setContentDescription("语音选台");
+            overlay.setOnClickListener(v -> {
+                if (generation == voiceSwitchGeneration) {
+                    removeVoiceSwitchOverlay();
+                }
+            });
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
+            card.setClickable(true);
             card.setPadding(userScriptOverlayDp(28), userScriptOverlayDp(24),
                     userScriptOverlayDp(28), userScriptOverlayDp(22));
             GradientDrawable background = new GradientDrawable();
@@ -16934,7 +17038,8 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                 && managementPanel.getVisibility() != View.VISIBLE
                 && backPrompt != null
                 && backPrompt.getVisibility() != View.VISIBLE
-                && userScriptInstallOverlay == null && !tvUiMenu.visible()
+                && userScriptInstallOverlay == null && voiceSwitchOverlay == null
+                && !tvUiMenu.visible()
                 && (jarChannelRuntime == null || !jarChannelRuntime.visible())
                 && (webSourceView == null || !webSourceView.isPageVisible()
                     || webSourceView.ownsMinimalPlaybackInput());

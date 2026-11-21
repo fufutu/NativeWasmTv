@@ -77,6 +77,8 @@ final class CloudLiveStore {
             new HashMap<String, Map<String, String>>();
     private final Set<String> folderChannels = new HashSet<String>();
     private final Set<String> videoChannels = new HashSet<String>();
+    // Consumed by the next playlist build to start a folder channel at a season offset.
+    private final Map<String, Integer> pendingStartEpisode = new HashMap<String, Integer>();
 
     private volatile String playlistText = "";
     private volatile int serverPort = CloudLiveConfig.DEFAULT_PORT;
@@ -133,6 +135,88 @@ final class CloudLiveStore {
     int folderCount() {
         synchronized (cacheLock) {
             return folderChannels.size();
+        }
+    }
+
+    /** Plays counted in the configured hot window, keyed by channel file id. */
+    int hits(String channelId) {
+        if (channelId == null || channelId.length() == 0) {
+            return 0;
+        }
+        synchronized (cacheLock) {
+            Integer value = hits.get(channelId);
+            return value == null ? 0 : value.intValue();
+        }
+    }
+
+    /** A contiguous run of episodes belonging to one season subfolder. */
+    static final class SeasonRange {
+        final String name;
+        final int start;
+        final int count;
+
+        SeasonRange(String name, int start, int count) {
+            this.name = name;
+            this.start = start;
+            this.count = count;
+        }
+    }
+
+    /**
+     * Season boundaries for a folder channel, derived from the episode season
+     * labels collected while walking the cloud folder tree. Returns an empty
+     * list for direct-video channels or when metadata is unavailable.
+     */
+    List<SeasonRange> seasons(String channelId) {
+        List<SeasonRange> result = new ArrayList<SeasonRange>();
+        if (channelId == null || channelId.length() == 0) {
+            return result;
+        }
+        CloudLiveApi.FolderMeta meta;
+        synchronized (cacheLock) {
+            meta = folderMeta.get(channelId);
+        }
+        if (meta == null || meta.episodes == null) {
+            return result;
+        }
+        Map<String, Integer> firstIndex = new LinkedHashMap<String, Integer>();
+        Map<String, Integer> counts = new LinkedHashMap<String, Integer>();
+        for (int i = 0; i < meta.episodes.size(); i++) {
+            String season = meta.episodes.get(i).season;
+            if (season == null || season.length() == 0) {
+                continue;
+            }
+            if (!firstIndex.containsKey(season)) {
+                firstIndex.put(season, i);
+                counts.put(season, 0);
+            }
+            counts.put(season, counts.get(season) + 1);
+        }
+        for (Map.Entry<String, Integer> entry : firstIndex.entrySet()) {
+            result.add(new SeasonRange(entry.getKey(), entry.getValue(),
+                    counts.get(entry.getKey())));
+        }
+        return result;
+    }
+
+    /** Asks the next playlist build for this channel to start at the given episode. */
+    void requestStartEpisode(String channelId, int episodeIndex) {
+        if (channelId == null || channelId.length() == 0 || episodeIndex < 0) {
+            return;
+        }
+        synchronized (cacheLock) {
+            pendingStartEpisode.put(channelId, episodeIndex);
+        }
+    }
+
+    /** Returns and clears a pending start-episode override, or -1 when none. */
+    int consumeStartEpisode(String channelId) {
+        if (channelId == null || channelId.length() == 0) {
+            return -1;
+        }
+        synchronized (cacheLock) {
+            Integer value = pendingStartEpisode.remove(channelId);
+            return value == null ? -1 : value.intValue();
         }
     }
 
@@ -910,7 +994,8 @@ final class CloudLiveStore {
                 continue;
             }
             episodes.add(new CloudLiveApi.Episode(item.optString("file_id", ""),
-                    item.optString("name", ""), item.optDouble("duration", 0)));
+                    item.optString("name", ""), item.optDouble("duration", 0),
+                    item.optString("season", "")));
         }
         return new CloudLiveApi.FolderMeta(json.optString("folder_id", ""),
                 json.optString("folder_name", ""), episodes);
@@ -977,7 +1062,8 @@ final class CloudLiveStore {
             JSONArray episodes = new JSONArray();
             for (CloudLiveApi.Episode episode : meta.episodes) {
                 episodes.put(new JSONObject().put("file_id", episode.fileId)
-                        .put("name", episode.name).put("duration", episode.duration));
+                        .put("name", episode.name).put("duration", episode.duration)
+                        .put("season", episode.season));
             }
             writeJson(new File(foldersDir, folderId + ".json"), new JSONObject()
                     .put("folder_id", folderId).put("folder_name", meta.folderName)
