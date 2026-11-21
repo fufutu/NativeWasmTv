@@ -355,9 +355,8 @@ final class CloudLiveService {
         if (!refreshAfterStart && freshStore.playlistText().length() > 0) {
             return;
         }
-        // Same as the Python service: a fresh start always force-refreshes, so
-        // videos added while the TV was off show up within seconds.
-        requestRefresh(true);
+        // Start with an incremental refresh; only the manual button forces a full scan.
+        requestRefresh(false);
     }
 
     private synchronized void stopInternal() {

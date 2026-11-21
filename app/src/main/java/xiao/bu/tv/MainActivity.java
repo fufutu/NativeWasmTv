@@ -1238,6 +1238,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     private volatile int autoSwitchSourceSeconds;
     private Runnable customSourceTimeout;
     private volatile boolean autoUpdateChannelList;
+    private volatile long lastCatalogRefreshAt;
     private volatile String remoteCatalogUrl = "";
     private volatile String remoteTakeoverSessionId = "";
     private volatile long lastRemoteTakeoverMessageAt;
@@ -1883,6 +1884,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         // Management remains available even when a source cannot produce a frame.
         root.postDelayed(startManagementServerTask, 900L);
         // Restore SQLite immediately; network refresh must not gate the cached list.
+        lastCatalogRefreshAt = SystemClock.elapsedRealtime();
         loadCompleteCatalogInBackground(false);
         CloudLiveService.get(this).setCatalogListener(new CloudLiveService.CatalogListener() {
             @Override public void onCatalogChanged() {
@@ -17993,6 +17995,18 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         setWindowContentActive(true);
         refreshManagementAddress();
         applySystemUiVisibility();
+        // Refresh channel sources when the user returns after >5 min away.
+        // PlaylistManager.updateSources() already skips unchanged M3U content
+        // via its SHA-256 fingerprint, so this only costs a network request.
+        if (autoUpdateChannelList && remoteCatalogUrl.length() == 0) {
+            long elapsed = SystemClock.elapsedRealtime() - lastCatalogRefreshAt;
+            if (elapsed > 5 * 60 * 1000L) {
+                lastCatalogRefreshAt = SystemClock.elapsedRealtime();
+                AppLog.i(TAG, "onResume: refreshing channel sources after "
+                        + (elapsed / 1000) + "s idle");
+                loadCompleteCatalogInBackground(true);
+            }
+        }
     }
 
     @Override protected void onActivityResult(int request,int result,Intent data) {

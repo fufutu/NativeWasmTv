@@ -68,6 +68,10 @@ final class CloudLiveStore {
     private final Map<String, String> parentNames = new LinkedHashMap<String, String>();
     private final Map<String, Map<String, String>> secondNames =
             new HashMap<String, Map<String, String>>();
+    // UpdatedAt timestamps from the cloud API drive incremental refresh decisions.
+    private final Map<String, String> parentUpdatedAt = new HashMap<String, String>();
+    private final Map<String, Map<String, String>> secondUpdatedAt =
+            new HashMap<String, Map<String, String>>();
     private final Set<String> folderChannels = new HashSet<String>();
     private final Set<String> videoChannels = new HashSet<String>();
 
@@ -243,6 +247,28 @@ final class CloudLiveStore {
                         }
                     }
                     secondNames.put(dirId, values);
+                }
+            }
+            JSONObject parentTs = names.optJSONObject("parentUpdatedAt");
+            if (parentTs != null) {
+                for (java.util.Iterator<String> it = parentTs.keys(); it.hasNext(); ) {
+                    String key = it.next();
+                    parentUpdatedAt.put(key, parentTs.optString(key, ""));
+                }
+            }
+            JSONObject secondTs = names.optJSONObject("secondUpdatedAt");
+            if (secondTs != null) {
+                for (java.util.Iterator<String> it = secondTs.keys(); it.hasNext(); ) {
+                    String dirId = it.next();
+                    JSONObject third = secondTs.optJSONObject(dirId);
+                    Map<String, String> values = new HashMap<String, String>();
+                    if (third != null) {
+                        for (java.util.Iterator<String> child = third.keys(); child.hasNext(); ) {
+                            String key = child.next();
+                            values.put(key, third.optString(key, ""));
+                        }
+                    }
+                    secondUpdatedAt.put(dirId, values);
                 }
             }
         }
@@ -449,19 +475,29 @@ final class CloudLiveStore {
                 throw new IOException("读取云盘根目录失败，授权可能已过期");
             }
             Map<String, String> currentDirs = new LinkedHashMap<String, String>();
+            Map<String, String> currentUpdatedAt = new HashMap<String, String>();
             for (JSONObject item : parentItems) {
                 if ("folder".equals(item.optString("type", ""))) {
-                    currentDirs.put(item.optString("fileId", ""),
-                            item.optString("name", ""));
+                    String fid = item.optString("fileId", "");
+                    currentDirs.put(fid, item.optString("name", ""));
+                    currentUpdatedAt.put(fid, item.optString("updatedAt", ""));
                 }
             }
             Map<String, String> oldParent;
             Map<String, Map<String, String>> oldSecond;
+            Map<String, String> oldParentTs;
+            Map<String, Map<String, String>> oldSecondTs;
             synchronized (cacheLock) {
                 oldParent = new LinkedHashMap<String, String>(parentNames);
                 oldSecond = new HashMap<String, Map<String, String>>();
                 for (Map.Entry<String, Map<String, String>> entry : secondNames.entrySet()) {
                     oldSecond.put(entry.getKey(),
+                            new HashMap<String, String>(entry.getValue()));
+                }
+                oldParentTs = new HashMap<String, String>(parentUpdatedAt);
+                oldSecondTs = new HashMap<String, Map<String, String>>();
+                for (Map.Entry<String, Map<String, String>> entry : secondUpdatedAt.entrySet()) {
+                    oldSecondTs.put(entry.getKey(),
                             new HashMap<String, String>(entry.getValue()));
                 }
             }
@@ -470,6 +506,7 @@ final class CloudLiveStore {
                     synchronized (cacheLock) {
                         dirChildren.remove(removed);
                         secondNames.remove(removed);
+                        secondUpdatedAt.remove(removed);
                     }
                     new File(channelsDir, removed + ".json").delete();
                 }
@@ -477,6 +514,8 @@ final class CloudLiveStore {
             synchronized (cacheLock) {
                 parentNames.clear();
                 parentNames.putAll(currentDirs);
+                parentUpdatedAt.clear();
+                parentUpdatedAt.putAll(currentUpdatedAt);
             }
             int channelCount = 0;
             for (Map.Entry<String, String> dir : currentDirs.entrySet()) {
@@ -487,7 +526,7 @@ final class CloudLiveStore {
                     oldThird = new HashMap<String, String>();
                 }
                 boolean needSecond = force || !oldParent.containsKey(dirId)
-                        || !dirName.equals(oldParent.get(dirId));
+                        || isUpdatedAtChanged(currentUpdatedAt.get(dirId), oldParentTs.get(dirId));
                 List<DirChild> children;
                 if (needSecond) {
                     List<JSONObject> items = api.listFiles(dirId);
@@ -502,12 +541,16 @@ final class CloudLiveStore {
                     } else {
                         children = parseItems(items);
                         Map<String, String> third = new HashMap<String, String>();
-                        for (DirChild child : children) {
-                            third.put(child.fileId, child.name);
+                        Map<String, String> thirdTs = new HashMap<String, String>();
+                        for (JSONObject item : items) {
+                            String fid = item.optString("fileId", "");
+                            third.put(fid, item.optString("name", ""));
+                            thirdTs.put(fid, item.optString("updatedAt", ""));
                         }
                         synchronized (cacheLock) {
                             dirChildren.put(dirId, children);
                             secondNames.put(dirId, third);
+                            secondUpdatedAt.put(dirId, thirdTs);
                         }
                         writeDirChildren(dirId, dirName, children);
                     }
@@ -529,8 +572,15 @@ final class CloudLiveStore {
                         channelCount++;
                         continue;
                     }
+                    Map<String, String> oldThirdTs = oldSecondTs.get(dirId);
+                    Map<String, String> newThirdTs;
+                    synchronized (cacheLock) {
+                        newThirdTs = secondUpdatedAt.get(dirId);
+                    }
                     boolean needThird = force || !oldThird.containsKey(child.fileId)
-                            || !child.name.equals(oldThird.get(child.fileId));
+                            || isUpdatedAtChanged(
+                                    newThirdTs != null ? newThirdTs.get(child.fileId) : null,
+                                    oldThirdTs != null ? oldThirdTs.get(child.fileId) : null);
                     if (needThird) {
                         CloudLiveApi.FolderMeta fetched = api.fetchFolderMeta(child.fileId,
                                 child.name, 0);
@@ -562,6 +612,14 @@ final class CloudLiveStore {
             AppLog.i(TAG, "Catalog refreshed, channels=" + channelCount);
             return channelCount;
         }
+    }
+
+    /** True when the cloud reports a different updatedAt than what we cached. */
+    private static boolean isUpdatedAtChanged(String newTs, String oldTs) {
+        if (newTs == null || newTs.length() == 0) {
+            return false;
+        }
+        return !newTs.equals(oldTs);
     }
 
     private void publishPlaylist() {
@@ -691,6 +749,14 @@ final class CloudLiveStore {
         anchorsDir.mkdirs();
     }
 
+    private JSONObject buildSecondUpdatedAt() throws JSONException {
+        JSONObject result = new JSONObject();
+        for (Map.Entry<String, Map<String, String>> entry : secondUpdatedAt.entrySet()) {
+            result.put(entry.getKey(), new JSONObject(entry.getValue()));
+        }
+        return result;
+    }
+
     private void writeNames() {
         try {
             JSONObject parent = new JSONObject();
@@ -705,7 +771,9 @@ final class CloudLiveStore {
                 }
                 second.put(entry.getKey(), third);
             }
-            writeJson(namesFile, new JSONObject().put("parent", parent).put("second", second));
+            writeJson(namesFile, new JSONObject().put("parent", parent).put("second", second)
+                    .put("parentUpdatedAt", new JSONObject(parentUpdatedAt))
+                    .put("secondUpdatedAt", buildSecondUpdatedAt()));
         } catch (JSONException error) {
             AppLog.w(TAG, "Unable to save name snapshot", error);
         }
