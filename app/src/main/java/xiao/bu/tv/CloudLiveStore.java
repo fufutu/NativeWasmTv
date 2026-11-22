@@ -725,6 +725,14 @@ final class CloudLiveStore {
         }
     }
 
+    void setAuthorizationListener(CloudLiveApi.AuthorizationListener listener) {
+        api.setAuthorizationListener(listener);
+    }
+
+    boolean refreshAuthorization() {
+        return api.refreshAuthorization();
+    }
+
     int refresh(boolean force) throws IOException {
         if (config.parentFileId.length() == 0) {
             throw new IOException("请先在网页管理中填写云盘根目录 ID");

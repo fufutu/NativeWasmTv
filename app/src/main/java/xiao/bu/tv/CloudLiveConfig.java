@@ -3,11 +3,13 @@ package xiao.bu.tv;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Environment;
+import android.util.Base64;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Settings for the cloud-drive pseudo-live feature. Credentials stay in the
@@ -23,6 +25,7 @@ final class CloudLiveConfig {
     private static final String PARENT_FILE_ID = "parent_file_id";
     private static final String AUTHORIZATION = "authorization";
     private static final String MCLOUD_SIGN = "mcloud_sign";
+    private static final String USER_ID = "user_id";
     private static final String AUTO_REFRESH_INTERVAL = "auto_refresh_interval";
     private static final String X_TVG_URL = "x_tvg_url";
     private static final String REFRESH_TOKEN = "refresh_token";
@@ -38,6 +41,7 @@ final class CloudLiveConfig {
     final int windowSize;
     final String parentFileId;
     final String authorization;
+    final String userId;
     final String mcloudSign;
     final int autoRefreshInterval;
     final String xTvgUrl;
@@ -50,14 +54,15 @@ final class CloudLiveConfig {
     final int hotIntervalSec;
 
     private CloudLiveConfig(boolean enabled, int port, int windowSize, String parentFileId,
-            String authorization, String mcloudSign, int autoRefreshInterval, String xTvgUrl,
-            String refreshToken, boolean debugLog, boolean lanAccess, boolean warmupEnabled,
-            int hotLimit, int hotDays, int hotIntervalSec) {
+            String authorization, String userId, String mcloudSign, int autoRefreshInterval,
+            String xTvgUrl, String refreshToken, boolean debugLog, boolean lanAccess,
+            boolean warmupEnabled, int hotLimit, int hotDays, int hotIntervalSec) {
         this.enabled = enabled;
         this.port = port;
         this.windowSize = windowSize;
         this.parentFileId = parentFileId;
         this.authorization = authorization;
+        this.userId = userId;
         this.mcloudSign = mcloudSign;
         this.autoRefreshInterval = autoRefreshInterval;
         this.xTvgUrl = xTvgUrl;
@@ -79,6 +84,7 @@ final class CloudLiveConfig {
                 clamp(preferences.getInt(WINDOW_SIZE, 8), 3, 30),
                 preferences.getString(PARENT_FILE_ID, "").trim(),
                 preferences.getString(AUTHORIZATION, "").trim(),
+                preferences.getString(USER_ID, "").trim(),
                 preferences.getString(MCLOUD_SIGN, "").trim(),
                 Math.max(60, preferences.getInt(AUTO_REFRESH_INTERVAL, 600)),
                 preferences.getString(X_TVG_URL, "http://epg.51zmt.top:8000/e.xml").trim(),
@@ -95,6 +101,82 @@ final class CloudLiveConfig {
         return authorization.length() > 0 && parentFileId.length() > 0;
     }
 
+    CloudLiveConfig withAuthorization(String value) {
+        return new CloudLiveConfig(enabled, port, windowSize, parentFileId, value, userId,
+                mcloudSign, autoRefreshInterval, xTvgUrl, refreshToken, debugLog, lanAccess,
+                warmupEnabled, hotLimit, hotDays, hotIntervalSec);
+    }
+
+    /** Cloud refresh token carried as the third section of the decoded authorization. */
+    String cloudAuthToken() {
+        return cloudAuthToken(authorization);
+    }
+
+    static String cloudAuthToken(String value) {
+        String payload = authorizationPayload(value);
+        if (payload.length() == 0) {
+            return "";
+        }
+        String[] sections = payload.split(":", 3);
+        if (sections.length != 3 || !"pc".equalsIgnoreCase(sections[0])) {
+            return "";
+        }
+        return sections[2].trim();
+    }
+
+    /** Millisecond expiration carried as the fourth section of the refresh token. */
+    long authorizationExpiresAt() {
+        return authorizationExpiresAt(authorization);
+    }
+
+    static long authorizationExpiresAt(String value) {
+        String token = cloudAuthToken(value);
+        if (token.length() == 0) {
+            return 0;
+        }
+        String[] sections = token.split("\\|", -1);
+        if (sections.length < 4) {
+            return 0;
+        }
+        try {
+            long expiresAt = Long.parseLong(sections[3].trim());
+            return expiresAt > 0 ? expiresAt : 0;
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
+
+    /** The refresh endpoint returns app_auth without the leading "pc:" section. */
+    static String authorizationFromAppAuth(String appAuth) {
+        if (appAuth == null) {
+            return "";
+        }
+        String encoded = appAuth.trim();
+        if (encoded.regionMatches(true, 0, "Basic ", 0, 6)) {
+            encoded = encoded.substring(6).trim();
+        }
+        return encoded.length() == 0 ? "" : "Basic cGM6" + encoded;
+    }
+
+    private static String authorizationPayload(String value) {
+        if (value == null) {
+            return "";
+        }
+        String encoded = value.trim();
+        if (encoded.regionMatches(true, 0, "Basic ", 0, 6)) {
+            encoded = encoded.substring(6).trim();
+        }
+        if (encoded.length() == 0) {
+            return "";
+        }
+        try {
+            return new String(Base64.decode(encoded, Base64.DEFAULT), StandardCharsets.UTF_8)
+                    .trim();
+        } catch (IllegalArgumentException ignored) {
+            return "";
+        }
+    }
+
     boolean sameAs(CloudLiveConfig other) {
         return other != null
                 && enabled == other.enabled
@@ -102,6 +184,7 @@ final class CloudLiveConfig {
                 && windowSize == other.windowSize
                 && parentFileId.equals(other.parentFileId)
                 && authorization.equals(other.authorization)
+                && userId.equals(other.userId)
                 && mcloudSign.equals(other.mcloudSign)
                 && autoRefreshInterval == other.autoRefreshInterval
                 && xTvgUrl.equals(other.xTvgUrl)
@@ -121,6 +204,7 @@ final class CloudLiveConfig {
                 .put("windowSize", config.windowSize)
                 .put("parentFileId", config.parentFileId)
                 .put("authorizationSet", config.authorization.length() > 0)
+                .put("userId", config.userId)
                 .put("mcloudSignSet", config.mcloudSign.length() > 0)
                 .put("autoRefreshInterval", config.autoRefreshInterval)
                 .put("xTvgUrl", config.xTvgUrl)
@@ -161,6 +245,9 @@ final class CloudLiveConfig {
         }
         if (request.has("parentFileId")) {
             editor.putString(PARENT_FILE_ID, request.optString("parentFileId", "").trim());
+        }
+        if (request.has("userId")) {
+            editor.putString(USER_ID, request.optString("userId", "").trim());
         }
         if (request.has("autoRefreshInterval")) {
             int interval = request.optInt("autoRefreshInterval", 600);

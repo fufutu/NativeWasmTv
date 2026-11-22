@@ -100,6 +100,7 @@
         <div class="config-note">把个人云盘目录做成伪直播频道；启用后自动注册为频道源。</div>
         <div id="cloudLiveForm" class="epg-source-list cloud-live-form">
           <div class="epg-source-row"><input id="cloudLiveParent" type="text" placeholder="云盘根目录 fileId" /></div>
+          <div class="epg-source-row"><input id="cloudLiveUserId" type="text" inputmode="numeric" placeholder="userId（用于 Authorization 每日自动延期）" /></div>
           <div class="epg-source-row"><input id="cloudLiveAuthorization" type="text" placeholder="Authorization" /></div>
           <div class="epg-source-row"><input id="cloudLiveSign" type="text" placeholder="mcloud-sign" /></div>
           <div class="epg-source-row"><input id="cloudLivePort" type="number" inputmode="numeric" placeholder="本地端口，默认 18086" /></div>
@@ -144,7 +145,7 @@
           ><button onclick="refreshCloudLive()">全量刷新</button>
         </div>
         <div id="cloudLiveStatus" class="config-note" aria-live="polite"></div>
-        <div class="config-note">授权信息只保存在本机，不会上传。</div>
+        <div class="config-note">授权信息只保存在本机，仅用于移动云盘接口与每日延期。</div>
       </section>
       <section class="browser-section">
         <div class="section-head"><h2>Ku9 脚本</h2></div>

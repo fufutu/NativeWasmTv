@@ -27,6 +27,9 @@ final class CloudLiveService {
     private static final String SOURCE_ID = "cloudlive";
     private static final String SOURCE_NAME = "云盘直播";
     private static final int WARMUP_LIMIT = 40;
+    private static final long AUTH_REFRESH_INTERVAL_MS = 24L * 60L * 60L * 1000L;
+    private static final long AUTH_REFRESH_RETRY_MS = 60L * 60L * 1000L;
+    private static final String AUTH_REFRESH_SUCCESS_AT = "auth_refresh_success_at";
     private static CloudLiveService instance;
 
     interface CatalogListener {
@@ -53,6 +56,9 @@ final class CloudLiveService {
     private int refreshRetries;
     private String appliedStorageRoot = "";
     private volatile long hotCacheAt;
+    private volatile long lastAuthRefreshAt;
+    private volatile long lastAuthAttemptAt;
+    private volatile String lastAuthRefreshError = "";
     private volatile JSONArray hotCache = new JSONArray();
     private volatile CloudLiveStore hotCacheStore;
     private final java.util.concurrent.ConcurrentHashMap<String, Long> lastHitAt =
@@ -209,6 +215,7 @@ final class CloudLiveService {
         String error = "";
         int channels = 0;
         try {
+            ensureAuthorization(target);
             channels = target.refresh(force);
         } catch (IOException failure) {
             error = failure.getMessage() == null
@@ -249,12 +256,54 @@ final class CloudLiveService {
                 try {
                     scheduled.schedule(new Runnable() {
                         @Override public void run() {
-                            requestRefresh(true);
+                            requestRefresh(force);
                         }
                     }, 30L * attempt, TimeUnit.SECONDS);
                 } catch (RuntimeException ignored) {
                 }
             }
+        }
+    }
+
+    /** Refreshes at most once a day while running; failures retry at most hourly. */
+    private void ensureAuthorization(CloudLiveStore target) {
+        CloudLiveConfig settings = config;
+        if (settings == null || settings.userId.length() == 0) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        long expiresAt = settings.authorizationExpiresAt();
+        boolean due = lastAuthRefreshAt <= 0
+                || now - lastAuthRefreshAt >= AUTH_REFRESH_INTERVAL_MS;
+        boolean expiring = expiresAt > 0 && expiresAt <= now + AUTH_REFRESH_INTERVAL_MS;
+        if (!due && !expiring) {
+            return;
+        }
+        if (now - lastAuthAttemptAt < AUTH_REFRESH_RETRY_MS) {
+            return;
+        }
+        lastAuthAttemptAt = now;
+        if (!target.refreshAuthorization()) {
+            lastAuthRefreshError = "授权自动延期失败，将每小时重试";
+        }
+    }
+
+    private void persistRefreshedAuthorization(String authorization) {
+        try {
+            CloudLiveConfig.save(context, new JSONObject().put("authorization", authorization));
+            long now = System.currentTimeMillis();
+            getSharedPreferences(CloudLiveConfig.PREFERENCES, MODE_PRIVATE).edit()
+                    .putLong(AUTH_REFRESH_SUCCESS_AT, now).apply();
+            CloudLiveConfig settings = config;
+            if (settings != null) {
+                config = settings.withAuthorization(authorization);
+            }
+            lastAuthRefreshAt = now;
+            lastAuthRefreshError = "";
+            long expiresAt = CloudLiveConfig.authorizationExpiresAt(authorization);
+            AppLog.i(TAG, "Cloud authorization saved, expiresAt=" + expiresAt);
+        } catch (JSONException error) {
+            lastAuthRefreshError = "授权已延期，但保存失败";
         }
     }
 
@@ -328,6 +377,10 @@ final class CloudLiveService {
                     .put("directories", current == null ? 0 : current.directoryCount())
                     .put("videos", current == null ? 0 : current.videoCount())
                     .put("folders", current == null ? 0 : current.folderCount())
+                    .put("authorizationExpiresAt",
+                            settings == null ? 0 : settings.authorizationExpiresAt())
+                    .put("authorizationRefreshedAt", lastAuthRefreshAt)
+                    .put("authorizationRefreshError", lastAuthRefreshError)
                     .put("hotChannels", hotChannels(settings, current));
         } catch (JSONException impossible) {
             return new JSONObject();
@@ -373,6 +426,15 @@ final class CloudLiveService {
         CloudLiveApi api = new CloudLiveApi(updated);
         CloudLiveStore freshStore = new CloudLiveStore(root, updated, api);
         freshStore.loadFromDisk();
+        lastAuthRefreshAt = getSharedPreferences(CloudLiveConfig.PREFERENCES, MODE_PRIVATE)
+                .getLong(AUTH_REFRESH_SUCCESS_AT, 0);
+        lastAuthAttemptAt = 0;
+        lastAuthRefreshError = "";
+        freshStore.setAuthorizationListener(new CloudLiveApi.AuthorizationListener() {
+            @Override public void onAuthorizationChanged(String authorization) {
+                persistRefreshedAuthorization(authorization);
+            }
+        });
         worker = Executors.newFixedThreadPool(2, daemonFactory("cloud-live-worker"));
         warmExecutor = Executors.newSingleThreadExecutor(daemonFactory("cloud-live-warm"));
         scheduler = Executors.newSingleThreadScheduledExecutor(

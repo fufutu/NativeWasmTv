@@ -173,6 +173,7 @@ function saveCloudLive(refreshNow) {
   var payload = {
     enabled: enableSwitch.checked,
     parentFileId: parentInput.value.trim(),
+    userId: document.getElementById("cloudLiveUserId").value.trim(),
     port: Number(document.getElementById("cloudLivePort").value) || 18086,
     windowSize: Number(document.getElementById("cloudLiveWindow").value) || 8,
     autoRefreshInterval: Number(document.getElementById("cloudLiveInterval").value) || 600,
@@ -226,6 +227,7 @@ function renderCloudLive(cloud) {
   if (cloudLiveSaving) return;
   document.getElementById("cloudLiveEnabled").checked = cloud.enabled === true;
   document.getElementById("cloudLiveParent").value = cloud.parentFileId || "";
+  document.getElementById("cloudLiveUserId").value = cloud.userId || "";
   document.getElementById("cloudLivePort").value = cloud.port || 18086;
   document.getElementById("cloudLiveWindow").value = cloud.windowSize || 8;
   document.getElementById("cloudLiveInterval").value = cloud.autoRefreshInterval || 600;
@@ -265,6 +267,19 @@ function renderCloudLiveStatus(cloud) {
         (status.lastRefreshTookMs ? " · " + Math.round(status.lastRefreshTookMs / 1000) + " 秒" : ""));
     }
     if (status.lastRefreshError) parts.push("错误：" + status.lastRefreshError);
+    if (cloud.userId) {
+      var expiresAt = Number(status.authorizationExpiresAt) || 0;
+      parts.push(expiresAt ?
+        "授权到期 " + new Date(expiresAt).toLocaleString() +
+          (expiresAt <= Date.now() ? "（已过期）" : " · 每日自动延期") :
+        "授权每日自动延期");
+      if (status.authorizationRefreshedAt) {
+        parts.push("上次延期 " + new Date(status.authorizationRefreshedAt).toLocaleString());
+      }
+      if (status.authorizationRefreshError) parts.push(status.authorizationRefreshError);
+    } else if (cloud.authorizationSet) {
+      parts.push("未填写 userId，授权不会自动延期");
+    }
     var hot = status.hotChannels || [];
     if (hot.length) {
       var hotText = [];

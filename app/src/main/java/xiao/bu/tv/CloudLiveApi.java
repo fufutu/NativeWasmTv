@@ -22,6 +22,8 @@ final class CloudLiveApi {
     private static final String BASE = "https://personal-kd-njs.yun.139.com";
     private static final String LIST_URL = BASE + "/hcy/file/list";
     private static final String PREVIEW_URL = BASE + "/hcy/videoPreview/getPreviewInfo";
+    private static final String AUTH_REFRESH_URL =
+            "https://note-njs.yun.139.com/yun-note/user/authTokenRefresh";
     private static final MediaType JSON = MediaType.parse("application/json;charset=UTF-8");
     private static final int MAX_PAGES = 100;
 
@@ -85,17 +87,79 @@ final class CloudLiveApi {
         }
     }
 
+    interface AuthorizationListener {
+        void onAuthorizationChanged(String authorization);
+    }
+
     private final CloudLiveConfig config;
     private final OkHttpClient client;
+    private volatile String authorization;
+    private AuthorizationListener authorizationListener;
 
     CloudLiveApi(CloudLiveConfig config) {
         this.config = config;
+        this.authorization = config.authorization;
         client = NetworkClient.sharedClient().newBuilder()
                 .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
                 .writeTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
                 .callTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
                 .build();
+    }
+
+    void setAuthorizationListener(AuthorizationListener listener) {
+        authorizationListener = listener;
+    }
+
+    /**
+     * Exchanges the cloud auth token for a new month-long authorization. The
+     * caller decides when this is needed; calls are serialized per store.
+     */
+    synchronized boolean refreshAuthorization() {
+        String authToken = CloudLiveConfig.cloudAuthToken(authorization);
+        if (config.userId.length() == 0 || authToken.length() == 0) {
+            return false;
+        }
+        Response response = null;
+        try {
+            JSONObject payload = new JSONObject()
+                    .put("authToken", authToken)
+                    .put("userId", config.userId);
+            Request request = new Request.Builder().url(AUTH_REFRESH_URL)
+                    .post(RequestBody.create(JSON, payload.toString()))
+                    .header("Content-Type", "application/json")
+                    .build();
+            response = client.newCall(request).execute();
+            String updated = response.isSuccessful()
+                    ? CloudLiveConfig.authorizationFromAppAuth(response.header("app_auth")) : "";
+            if (updated.length() == 0 || updated.equals(authorization)) {
+                return false;
+            }
+            authorization = updated;
+            AuthorizationListener listener = authorizationListener;
+            if (listener != null) {
+                listener.onAuthorizationChanged(updated);
+            }
+            AppLog.i(TAG, "Cloud authorization refreshed");
+            return true;
+        } catch (IOException error) {
+            AppLog.w(TAG, "Cloud authorization refresh failed: " + error.getClass().getSimpleName());
+            return false;
+        } catch (JSONException error) {
+            return false;
+        } finally {
+            if (response != null) {
+                response.close();
+            }
+        }
+    }
+
+    private synchronized boolean refreshAuthorizationAfter401(String failedAuthorization) {
+        // Another request may have completed the refresh while this one waited.
+        if (!failedAuthorization.equals(authorization)) {
+            return true;
+        }
+        return refreshAuthorization();
     }
 
     /** Returns null when the request failed; an empty list means the folder is empty. */
@@ -280,8 +344,17 @@ final class CloudLiveApi {
         Response response = null;
         try {
             response = client.newCall(request).execute();
-            ResponseBody responseBody = response.body();
-            if (!response.isSuccessful() || responseBody == null) {
+            if (response.code() == 401) {
+                String failedAuthorization = authorization;
+                response.close();
+                response = null;
+                if (refreshAuthorizationAfter401(failedAuthorization)) {
+                    request = request.newBuilder().headers(headers()).build();
+                    response = client.newCall(request).execute();
+                }
+            }
+            ResponseBody responseBody = response == null ? null : response.body();
+            if (response == null || !response.isSuccessful() || responseBody == null) {
                 return null;
             }
             return new JSONObject(responseBody.string());
@@ -323,7 +396,7 @@ final class CloudLiveApi {
         return new okhttp3.Headers.Builder()
                 .add("Accept", "application/json, text/plain, */*")
                 .add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-                .add("Authorization", config.authorization)
+                .add("Authorization", authorization)
                 .add("CMS-DEVICE", "default")
                 .add("Content-Type", "application/json;charset=UTF-8")
                 .add("INNER-HCY-ROUTER-HTTPS", "1")
