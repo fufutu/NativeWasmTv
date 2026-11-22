@@ -88,6 +88,13 @@ final class NetworkClient {
                 .retryOnConnectionFailure(false).build()).open(url);
     }
 
+    static HttpURLConnection openBoundedFresh(URL url, int timeoutMs) throws IOException {
+        return new OkUrlFactory(sharedClient().newBuilder()
+                .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .connectionPool(new ConnectionPool(0, 1, TimeUnit.MILLISECONDS))
+                .retryOnConnectionFailure(true).build()).open(url);
+    }
+
     static void invalidateDns(String hostname) {
         Dns dns = sharedClient().dns();
         if (dns instanceof ProcessDns) ((ProcessDns) dns).invalidate(hostname);

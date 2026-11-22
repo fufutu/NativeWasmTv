@@ -1191,9 +1191,9 @@ final class PlaylistManager {
         // One shared budget covers HEAD, GET, mirrors, redirects and cookie challenges.
         String github = GithubProxy.githubSource(url.toString());
         if (github != null && GithubProxy.isEnabled())
-            return new GithubConnection(url, target -> NetworkClient.openBounded(
+            return new GithubConnection(url, target -> NetworkClient.openBoundedFresh(
                     target, remainingMobileTime(deadline)));
-        return NetworkClient.openBounded(github == null ? url : new URL(github),
+        return NetworkClient.openBoundedFresh(github == null ? url : new URL(github),
                 remainingMobileTime(deadline));
     }
 
@@ -1220,6 +1220,7 @@ final class PlaylistManager {
         AppLog.i(TAG, "[debug playlist-auto-refresh] opening HTTP host=" + url.getHost());
         // endregion
         HttpURLConnection connection = openPlaylistConnection(url, deadline);
+        connection.setRequestProperty("Connection", "close");
         connection.setConnectTimeout(deadline == 0L ? 12000 : Math.min(12000, remainingMobileTime(deadline)));
         connection.setReadTimeout(deadline == 0L ? PLAYLIST_READ_TIMEOUT_MS : Math.min(PLAYLIST_READ_TIMEOUT_MS, remainingMobileTime(deadline)));
         connection.setInstanceFollowRedirects(true);
