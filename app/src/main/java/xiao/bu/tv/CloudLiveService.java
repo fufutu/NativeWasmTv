@@ -292,7 +292,7 @@ final class CloudLiveService {
         try {
             CloudLiveConfig.save(context, new JSONObject().put("authorization", authorization));
             long now = System.currentTimeMillis();
-            getSharedPreferences(CloudLiveConfig.PREFERENCES, MODE_PRIVATE).edit()
+            context.getSharedPreferences(CloudLiveConfig.PREFERENCES, Context.MODE_PRIVATE).edit()
                     .putLong(AUTH_REFRESH_SUCCESS_AT, now).apply();
             CloudLiveConfig settings = config;
             if (settings != null) {
@@ -426,7 +426,7 @@ final class CloudLiveService {
         CloudLiveApi api = new CloudLiveApi(updated);
         CloudLiveStore freshStore = new CloudLiveStore(root, updated, api);
         freshStore.loadFromDisk();
-        lastAuthRefreshAt = getSharedPreferences(CloudLiveConfig.PREFERENCES, MODE_PRIVATE)
+        lastAuthRefreshAt = context.getSharedPreferences(CloudLiveConfig.PREFERENCES, Context.MODE_PRIVATE)
                 .getLong(AUTH_REFRESH_SUCCESS_AT, 0);
         lastAuthAttemptAt = 0;
         lastAuthRefreshError = "";
