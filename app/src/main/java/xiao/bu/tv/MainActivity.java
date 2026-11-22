@@ -6962,8 +6962,13 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                         applyPlaylistGroups(groups, false, false);
                         AppLog.i(TAG, "Cached channel catalog applied before automatic refresh");
                         try {
-                            groups = playlistManager.updateSources(
-                                    playlistManager.getSourcesJson()).groups;
+                            // region debug-point playlist-auto-refresh
+                            PlaylistManager.UpdateResult refreshResult = playlistManager.updateSources(
+                                    playlistManager.getSourcesJson());
+                            groups = refreshResult.groups;
+                            for (String warning : refreshResult.warnings)
+                                AppLog.w(TAG, "[debug playlist-auto-refresh] " + warning);
+                            // endregion
                             catalogRefreshRetryCount = 0;
                             CloudLiveService.get(MainActivity.this)
                                     .clearCatalogRefreshPending();

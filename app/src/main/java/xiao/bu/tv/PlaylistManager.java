@@ -389,6 +389,9 @@ final class PlaylistManager {
         List<String> warnings = new ArrayList<String>();
         int enabledCount = 0;
         int availableCount = 0;
+        // region debug-point playlist-auto-refresh
+        AppLog.i(TAG, "[debug playlist-auto-refresh] updateSources count=" + sources.size());
+        // endregion
         for (Source source : sources) {
             if (!source.enabled) {
                 continue;
@@ -396,8 +399,17 @@ final class PlaylistManager {
             enabledCount++;
             byte[] bytes = null;
             try {
+                // region debug-point playlist-auto-refresh
+                AppLog.i(TAG, "[debug playlist-auto-refresh] readSource begin name=" + source.name
+                        + " local=" + isLocalLocation(source.location));
+                // endregion
                 SourceRead read = readSource(source);
                 bytes = read.bytes;
+                // region debug-point playlist-auto-refresh
+                AppLog.i(TAG, "[debug playlist-auto-refresh] readSource done name=" + source.name
+                        + " bytes=" + (bytes == null ? -1 : bytes.length)
+                        + " cacheChanged=" + read.cacheChanged);
+                // endregion
                 if (!isLocalLocation(source.location) && read.cacheChanged) {
                     writeCache(source, bytes);
                 }
@@ -406,6 +418,9 @@ final class PlaylistManager {
                 }
                 bytes = new TvbusLiveConfig(context).expand(bytes, source.location, true);
             } catch (IOException error) {
+                // region debug-point playlist-auto-refresh
+                AppLog.w(TAG, "[debug playlist-auto-refresh] readSource failed name=" + source.name, error);
+                // endregion
                 if (!isLocalLocation(source.location)) {
                     try {
                         bytes = readCache(source);
@@ -1201,6 +1216,9 @@ final class PlaylistManager {
             AppLog.i(TAG, "Channel source unchanged by size/MD5 " + sourceUrl);
             return RemoteDownload.notModified();
         }
+        // region debug-point playlist-auto-refresh
+        AppLog.i(TAG, "[debug playlist-auto-refresh] opening HTTP host=" + url.getHost());
+        // endregion
         HttpURLConnection connection = openPlaylistConnection(url, deadline);
         connection.setConnectTimeout(deadline == 0L ? 12000 : Math.min(12000, remainingMobileTime(deadline)));
         connection.setReadTimeout(deadline == 0L ? PLAYLIST_READ_TIMEOUT_MS : Math.min(PLAYLIST_READ_TIMEOUT_MS, remainingMobileTime(deadline)));
