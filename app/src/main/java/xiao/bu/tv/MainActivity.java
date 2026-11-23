@@ -3249,7 +3249,8 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
 
                 @Override
                 public String searchAdmin(JSONObject request) throws Exception {
-                    return ChannelSearchControl.admin(MainActivity.this, request);
+                    // Listener 要的是 JSON 文本，ChannelSearchControl.admin 返回的是 JSONObject
+                    return ChannelSearchControl.admin(MainActivity.this, request).toString();
                 }
 
                 @Override

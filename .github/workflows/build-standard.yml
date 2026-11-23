@@ -70,7 +70,45 @@ jobs:
 
       - name: 4. Build ARM32 Release APK
         # 注意这里改成了 assembleArm32Release
-        run: ./gradlew :app:assembleArm32Release --stacktrace
+        # 输出同时写文件，失败时由下一步把关键报错打成注解（页面上直接可见，不用翻日志）
+        run: |
+          set -o pipefail
+          ./gradlew :app:assembleArm32Release --stacktrace 2>&1 | tee "$RUNNER_TEMP/gradle.log"
+
+      - name: 4b. 构建失败时把关键报错打成注解
+        if: failure()
+        run: |
+          LOG="$RUNNER_TEMP/gradle.log"
+          if [ ! -f "$LOG" ]; then echo "没有拿到 gradle 日志"; exit 0; fi
+          python3 - "$LOG" <<'PY'
+          import sys
+          path = sys.argv[1]
+          lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+
+          def emit(text):
+              print("::error::" + text.replace("%", "%25").replace("\r", "").strip()[:300])
+
+          marks = [i for i, l in enumerate(lines) if "What went wrong" in l]
+          if not marks:
+              emit("没有找到 What went wrong，下面是最后 40 行")
+              for l in lines[-40:]:
+                  if l.strip():
+                      emit(l)
+              sys.exit(0)
+          start = max(0, marks[0] - 20)
+          end = min(len(lines), marks[0] + 55)
+          for l in lines[start:end]:
+              if l.strip():
+                  emit(l)
+
+          # javac / R8 的具体报错常常在别的段落，单独抓一遍
+          keys = ("error:", "错误:", ".java:", "Missing class", "CompilationError")
+          hits = [l for l in lines if any(k in l for k in keys)]
+          if hits:
+              emit("---- 编译/混淆的具体报错（最多 40 条）----")
+              for l in hits[:40]:
+                  emit(l)
+          PY
 
       - name: 5. Upload APK
         uses: actions/upload-artifact@v4
