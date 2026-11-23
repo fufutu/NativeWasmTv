@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"
+    />
+    <title>频道搜索 · nTv</title>
+    <script src="/js/theme.js?v=20261030-ui"></script>
+    <link rel="stylesheet" href="/css/common.css?v=popup-position2" />
+    <link rel="stylesheet" href="/css/night.css?v=night-hairline1" />
+    <link rel="stylesheet" href="/css/search.css?v=search1" />
+  </head>
+  <body data-parent="/index.html">
+    <main id="searchPage" class="secondary-page search-page">
+      <div class="top">
+        <button class="back-button" onclick="goBack()">‹ 返回</button>
+        <div class="page-title">频道搜索</div>
+        <div class="online"><span class="dot"></span><span id="searchStatus">电视在线</span></div>
+      </div>
+
+      <section class="search-card">
+        <div class="search-box">
+          <input
+            id="searchText"
+            type="search"
+            inputmode="search"
+            autocomplete="off"
+            placeholder="输入频道名、别名或频道号，例如 湖南 或 CCTV6"
+            onkeydown="if(event.key==='Enter'){submitSearch();}"
+          />
+          <button class="primary" id="searchPlayButton" onclick="submitSearch()">搜索并切换</button>
+        </div>
+        <div class="search-actions">
+          <button id="searchOnlyButton" onclick="searchOnly()">只搜索不播放</button>
+        </div>
+        <p class="search-tip">
+          命中多个时电视弹出候选，8 秒后自动播放第一个；只有一个命中就直接切台。
+        </p>
+      </section>
+
+      <section class="search-result-card">
+        <div class="search-result-head">
+          <h2>搜索结果</h2>
+          <span id="searchSummary">等待输入</span>
+        </div>
+        <div id="searchResults" class="search-results">
+          <div class="search-empty">输入关键词开始搜索</div>
+        </div>
+      </section>
+
+      <section class="search-card search-help">
+        <div class="search-result-head">
+          <h2>搜索设置</h2>
+          <a href="/pages/search-admin.html">别名与权重 ›</a>
+        </div>
+        <p class="search-tip">
+          搜不到想要的频道时，去设置页给频道加别名（例如「芒果台」）或提高权重，
+          热度会按实际播放次数自动参与排序。
+        </p>
+      </section>
+    </main>
+    <script src="/js/navigation.js?v=20261030-ui"></script>
+    <script src="/js/common.js?v=20261103-network"></script>
+    <script src="/js/pages/search.js?v=search1"></script>
+    <script src="/js/ui.js?v=20261030-ui"></script>
+  </body>
+</html>

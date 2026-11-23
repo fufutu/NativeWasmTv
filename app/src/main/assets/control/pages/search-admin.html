@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"
+    />
+    <title>搜索设置 · nTv</title>
+    <script src="/js/theme.js?v=20261030-ui"></script>
+    <link rel="stylesheet" href="/css/common.css?v=popup-position2" />
+    <link rel="stylesheet" href="/css/night.css?v=night-hairline1" />
+    <link rel="stylesheet" href="/css/search.css?v=search1" />
+  </head>
+  <body data-parent="/pages/search.html">
+    <main id="searchAdminPage" class="secondary-page search-page">
+      <div class="top">
+        <button class="back-button" onclick="goBack()">‹ 返回</button>
+        <div class="page-title">搜索设置</div>
+        <div class="online"><span class="dot"></span><span id="adminStatus">读取中</span></div>
+      </div>
+
+      <section class="search-card">
+        <div class="search-result-head">
+          <h2>索引状态</h2>
+          <button id="rebuildButton" onclick="rebuildIndex()">重建索引</button>
+        </div>
+        <div class="admin-stats">
+          <span class="admin-stat">引擎 <b id="statEngine">—</b></span>
+          <span class="admin-stat">已索引 <b id="statRows">—</b> 个频道</span>
+          <span class="admin-stat">分组 <b id="statGroups">—</b></span>
+        </div>
+        <p class="search-tip" id="statReason"></p>
+      </section>
+
+      <section class="search-card">
+        <div class="search-result-head">
+          <h2>排序策略</h2>
+          <button id="configButton" onclick="saveConfig()">保存策略</button>
+        </div>
+        <div class="admin-grid">
+          <label class="admin-field">
+            <span>字段权重 · 频道名</span>
+            <input id="weightChannelName" type="number" min="0" step="0.1" value="3" />
+          </label>
+          <label class="admin-field">
+            <span>字段权重 · 别名</span>
+            <input id="weightAliases" type="number" min="0" step="0.1" value="2" />
+          </label>
+          <label class="admin-field">
+            <span>字段权重 · 分组名</span>
+            <input id="weightGroupTitle" type="number" min="0" step="0.1" value="1" />
+          </label>
+          <label class="admin-field">
+            <span>热度增益（每 1 次播放）</span>
+            <input id="hotGain" type="number" min="0" step="0.005" value="0.02" />
+          </label>
+          <label class="admin-field">
+            <span>热度封顶</span>
+            <input id="hotCap" type="number" min="1" step="10" value="200" />
+          </label>
+          <label class="admin-field">
+            <span>排序方式</span>
+            <select id="rankMode">
+              <option value="hybrid">热度 + 相关度</option>
+              <option value="bm25">只看相关度</option>
+              <option value="hot">优先热度</option>
+            </select>
+          </label>
+        </div>
+        <label class="admin-toggle">
+          <input id="autoHot" type="checkbox" checked />
+          <span>用播放次数自动调整优先级（热度）</span>
+        </label>
+        <p class="search-tip">
+          最终得分 = 相关度 × 手动权重 ×（1 + 热度增益 × 热度）。热度是自动的，手动权重只在你调过之后才生效。
+        </p>
+      </section>
+
+      <section class="search-card">
+        <div class="search-result-head">
+          <h2>频道别名与权重</h2>
+          <span id="adminListSummary">—</span>
+        </div>
+        <div class="search-box">
+          <input
+            id="adminFilter"
+            type="search"
+            autocomplete="off"
+            placeholder="筛选频道名或分组名"
+            oninput="filterRows()"
+          />
+        </div>
+        <div id="adminRows" class="admin-rows">
+          <div class="search-empty">读取中…</div>
+        </div>
+        <div class="admin-more">
+          <button id="moreButton" onclick="loadMore()">加载更多</button>
+        </div>
+      </section>
+    </main>
+    <script src="/js/navigation.js?v=20261030-ui"></script>
+    <script src="/js/common.js?v=20261103-network"></script>
+    <script src="/js/pages/search-admin.js?v=search1"></script>
+    <script src="/js/ui.js?v=20261030-ui"></script>
+  </body>
+</html>

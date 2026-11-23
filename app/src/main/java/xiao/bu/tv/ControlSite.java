@@ -4,7 +4,8 @@ package xiao.bu.tv;
 final class ControlSite {
     private static final String[] PAGES = {
             "media", "playback", "channels", "browser", "script", "system", "groups",
-            "flymouse", "advanced", "personalization", "about", "licenses"
+            "flymouse", "advanced", "personalization", "about", "licenses",
+            "search", "search-admin"
     };
 
     private ControlSite() { }
@@ -39,6 +40,7 @@ final class ControlSite {
                 || "/licenses/GPL-3.0.txt".equals(path)
                 || "/css/system.css".equals(path) || "/css/about.css".equals(path)
                 || "/css/channels.css".equals(path) || "/css/personalization.css".equals(path)
+                || "/css/search.css".equals(path)
                 || "/css/night.css".equals(path) || "/js/theme.js".equals(path)
                 || "/css/media.css".equals(path)
                 || "/js/channel-picker.js".equals(path)

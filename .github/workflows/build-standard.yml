@@ -28,6 +28,16 @@ jobs:
       - name: 3. Make gradlew executable
         run: chmod +x gradlew
 
+      - name: 3b. 安装 NDK 与 CMake（频道搜索的 SQLite 驱动要用）
+        # 只有 app/build.gradle 未传 -PnoNativeSearch 时才会用到。
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME" -name sdkmanager -type f | head -n 1)"
+          fi
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" --install "ndk;26.1.10909125" "cmake;3.22.1"
+
       - name: 4. Build ARM32 Release APK
         # 注意这里改成了 assembleArm32Release
         run: ./gradlew :app:assembleArm32Release --stacktrace

@@ -46,6 +46,18 @@ final class LocalControlServer implements Closeable {
         default String channelSwitch(JSONObject request) throws Exception {
             throw new ControlRequestException(404, "不支持语音切台");
         }
+        /** 频道搜索：{text, limit, play}，play=false 只返回候选。 */
+        default String searchChannel(JSONObject request) throws Exception {
+            throw new ControlRequestException(404, "不支持频道搜索");
+        }
+        /** 按稳定键精确播放搜索结果里的一条：{key}。 */
+        default String searchPlay(JSONObject request) throws Exception {
+            throw new ControlRequestException(404, "不支持频道搜索");
+        }
+        /** 搜索索引管理：{action: list|save|config|status|rebuild}。 */
+        default String searchAdmin(JSONObject request) throws Exception {
+            throw new ControlRequestException(404, "不支持频道搜索");
+        }
         String mediaControl(JSONObject request) throws Exception;
         String pointer(JSONObject request) throws Exception;
 
@@ -552,6 +564,23 @@ final class LocalControlServer implements Closeable {
             send(socket, 200, "application/json; charset=utf-8",
                     listener.channelSwitch(new JSONObject(new String(body, "UTF-8")))
                             .getBytes("UTF-8"));
+        } else if ("POST".equals(method) && "/api/search/channel".equals(path)) {
+            send(socket, 200, "application/json; charset=utf-8",
+                    listener.searchChannel(new JSONObject(new String(body, "UTF-8")))
+                            .getBytes("UTF-8"));
+        } else if ("POST".equals(method) && "/api/search/play".equals(path)) {
+            send(socket, 200, "application/json; charset=utf-8",
+                    listener.searchPlay(new JSONObject(new String(body, "UTF-8")))
+                            .getBytes("UTF-8"));
+        } else if (("POST".equals(method) || "GET".equals(method))
+                && "/api/search/admin".equals(path)) {
+            String action = queryParameter(requestTarget, "action");
+            JSONObject searchRequest = "POST".equals(method)
+                    ? new JSONObject(new String(body, "UTF-8"))
+                    : new JSONObject().put("action",
+                            action == null || action.length() == 0 ? "status" : action);
+            send(socket, 200, "application/json; charset=utf-8",
+                    listener.searchAdmin(searchRequest).getBytes("UTF-8"));
         } else if ("POST".equals(method) && "/api/media/control".equals(path)) {
             send(socket, 200, "application/json; charset=utf-8",
                     listener.mediaControl(new JSONObject(new String(body, "UTF-8")))

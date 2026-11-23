@@ -1,6 +1,7 @@
 .gradle/
 patch.py
 .fufutu_apk_keys
+tv-search-android
 .idea/
 build/
 app/build/

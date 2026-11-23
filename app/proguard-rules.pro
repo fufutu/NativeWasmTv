@@ -42,6 +42,13 @@
     public boolean isCancelled();
 }
 
+# 频道搜索的 JNI 驱动：JNI 符号绑定的是类名 xiao.bu.tv.SQLiteEngine，
+# 所以这个类和它的 native 方法都不能被混淆或裁剪。
+-keep class xiao.bu.tv.SQLiteEngine { *; }
+-keepclasseswithmembers class xiao.bu.tv.SQLiteEngine {
+    native <methods>;
+}
+
 # OkHttp 3.12 uses optional annotations and probes Conscrypt before loading it.
 # Keep the package-relative publicsuffixes.gz lookup working after obfuscation.
 -dontwarn javax.annotation.**

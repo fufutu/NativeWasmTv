@@ -3182,6 +3182,8 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     };
     private void startManagementServer() {
         if(startupMaintenanceDestroyed||isFinishing()||controlServer!=null)return;
+        // 后台预热搜索索引：目录没变化时只是对比一次指纹，几乎不耗时。
+        new Thread(() -> channelSearchIndex().ensureSynced(), "channel-search-warmup").start();
         multimedia = new MultimediaReceiver(this);
         try {
             controlServer = new LocalControlServer(new LocalControlServer.Listener() {
@@ -3233,6 +3235,21 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                 @Override
                 public String channelSwitch(JSONObject request) throws Exception {
                     return handleVoiceChannelSwitch(request);
+                }
+
+                @Override
+                public String searchChannel(JSONObject request) throws Exception {
+                    return handleChannelSearch(request);
+                }
+
+                @Override
+                public String searchPlay(JSONObject request) throws Exception {
+                    return handleChannelSearchPlay(request);
+                }
+
+                @Override
+                public String searchAdmin(JSONObject request) throws Exception {
+                    return ChannelSearchControl.admin(MainActivity.this, request);
                 }
 
                 @Override
@@ -4119,6 +4136,65 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                 .put("autoPlaySeconds", 8).put("candidates", candidates).toString();
     }
 
+    /** 搜索索引单例。热度直接接现有的播放/命中次数，热度变化只影响排序、不重建索引。 */
+    private ChannelSearchIndex channelSearchIndex;
+
+    private ChannelSearchIndex channelSearchIndex() {
+        if (channelSearchIndex == null) {
+            channelSearchIndex = ChannelSearchIndex.get(this);
+            channelSearchIndex.setHotProvider(this::voiceChannelHits);
+        }
+        return channelSearchIndex;
+    }
+
+    /**
+     * POST /api/search/channel {text, limit, play}
+     * 手机网页搜索框走这里：只有一条命中就直接切台，多条命中在电视上弹候选浮层
+     * （沿用 8 秒倒计时、默认播放第一个）。play=false 只返回候选不播放。
+     */
+    private String handleChannelSearch(JSONObject request) throws Exception {
+        if (receiverRenderOnly) {
+            throw new ControlRequestException(400, "电视正在投屏接管，暂不支持搜索切台");
+        }
+        String text = request.optString("text", request.optString("query", "")).trim();
+        if (text.length() == 0) throw new ControlRequestException(400, "缺少搜索关键词");
+        ChannelSearchIndex index = channelSearchIndex();
+        if (!index.isAvailable()) throw new ControlRequestException(503, index.reason());
+        List<VoiceChannelMatcher.Candidate> candidates = ChannelSearchControl.candidates(this, request);
+        if (candidates.isEmpty()) throw new ControlRequestException(404, "没有找到匹配的频道");
+        // 页面要能按 key 精准点播，所以候选列表用带 key 的查询结果
+        JSONArray payload = ChannelSearchControl.query(this, request).optJSONArray("items");
+        if (payload == null) payload = new JSONArray();
+        if (!request.optBoolean("play", true)) {
+            return new JSONObject().put("ok", true).put("action", "candidates")
+                    .put("candidates", payload).toString();
+        }
+        if (candidates.size() == 1) {
+            switchToVoiceChannel(candidates.get(0));
+            return new JSONObject().put("ok", true).put("action", "switch")
+                    .put("name", candidates.get(0).channelName)
+                    .put("group", candidates.get(0).groupName)
+                    .put("candidates", payload).toString();
+        }
+        showSearchChannelCandidates(text, candidates);
+        return new JSONObject().put("ok", true).put("action", "candidates")
+                .put("autoPlaySeconds", 8).put("candidates", payload).toString();
+    }
+
+    /** POST /api/search/play {key}：搜索页点某一条，按稳定键定位后直接切台。 */
+    private String handleChannelSearchPlay(JSONObject request) throws Exception {
+        if (receiverRenderOnly) {
+            throw new ControlRequestException(400, "电视正在投屏接管，暂不支持切台");
+        }
+        String key = request.optString("key", "");
+        if (key.length() == 0) throw new ControlRequestException(400, "缺少频道标识");
+        VoiceChannelMatcher.Candidate candidate = ChannelSearchControl.byKey(key);
+        if (candidate == null) throw new ControlRequestException(404, "频道已不在目录中，请重新搜索");
+        switchToVoiceChannel(candidate);
+        return new JSONObject().put("ok", true).put("action", "switch")
+                .put("name", candidate.channelName).put("group", candidate.groupName).toString();
+    }
+
     private void switchToVoiceChannel(final VoiceChannelMatcher.Candidate candidate) {
         applyVoiceSeasonStart(candidate);
         try {
@@ -4221,6 +4297,17 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
 
     private void showVoiceChannelCandidates(final String text,
             final List<VoiceChannelMatcher.Candidate> candidates) {
+        showChannelCandidateOverlay("语音选台", "识别为「" + text + "」，请选择要播放的频道", candidates);
+    }
+
+    /** 搜索结果也复用同一个浮层：候选按钮 + 8 秒倒计时 + 默认第一个。 */
+    private void showSearchChannelCandidates(final String text,
+            final List<VoiceChannelMatcher.Candidate> candidates) {
+        showChannelCandidateOverlay("频道搜索", "搜索「" + text + "」，请选择要播放的频道", candidates);
+    }
+
+    private void showChannelCandidateOverlay(final String caption, final String detailText,
+            final List<VoiceChannelMatcher.Candidate> candidates) {
         runOnUiThread(() -> {
             if (isFinishing() || !(root instanceof ViewGroup)) return;
             removeVoiceSwitchOverlay();
@@ -4229,7 +4316,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             overlay.setBackgroundColor(0xb8000000);
             overlay.setClickable(true);
             overlay.setFocusable(true);
-            overlay.setContentDescription("语音选台");
+            overlay.setContentDescription(caption);
             overlay.setOnClickListener(v -> {
                 if (generation == voiceSwitchGeneration) {
                     removeVoiceSwitchOverlay();
@@ -4245,10 +4332,10 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             background.setCornerRadius(userScriptOverlayDp(18));
             background.setStroke(userScriptOverlayDp(1), Color.rgb(210, 214, 222));
             card.setBackgroundDrawable(background);
-            TextView title = userScriptOverlayText("语音选台", 24,
+            TextView title = userScriptOverlayText(caption, 24,
                     Color.rgb(28, 31, 36), true);
             card.addView(title);
-            TextView detail = userScriptOverlayText("识别为「" + text + "」，请选择要播放的频道",
+            TextView detail = userScriptOverlayText(detailText,
                     16, Color.rgb(96, 102, 112), false);
             detail.setPadding(0, userScriptOverlayDp(10), 0, userScriptOverlayDp(14));
             card.addView(detail);
