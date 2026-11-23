@@ -29,7 +29,6 @@ jobs:
         run: chmod +x gradlew
 
       - name: 3b. 安装 NDK 与 CMake（频道搜索的 SQLite 驱动要用）
-        # 只有 app/build.gradle 未传 -PnoNativeSearch 时才会用到。
         run: |
           set -e
           if [ -d "$ANDROID_HOME/ndk/26.1.10909125" ]; then
@@ -44,6 +43,30 @@ jobs:
           yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
           "$SDKMANAGER" --install "ndk;26.1.10909125" "cmake;3.22.1"
           echo "NDK 安装完成：$ANDROID_HOME/ndk/26.1.10909125"
+
+      - name: 3c. 编译频道搜索的 libsqlitejni.so（armeabi-v7a）
+        # 不经过 AGP 的 externalNativeBuild（AGP 8.9 的 CmakeOptions 不暴露 arguments，
+        # 而 arm32 的 minSdk 14 必须显式抬到 android-21）。编译逻辑在脚本里，
+        # 本机和 CI 共用同一份，产物直接落到 jniLibs 被正常打包。
+        run: |
+          set -e
+          SCRIPT=app/src/main/cpp/build-search-native.sh
+          chmod +x "$SCRIPT"
+          ANDROID_NDK_HOME="$ANDROID_HOME/ndk/26.1.10909125" "$SCRIPT"
+          SO=app/src/main/libs/armeabi-v7a/libsqlitejni.so
+          file "$SO"
+          # 必须是 32 位 ARM 的 ELF，否则装到电视上必然加载失败
+          file "$SO" | grep -q "ELF 32-bit.*ARM" || { echo "libsqlitejni.so 架构不对"; exit 1; }
+          # JNI 符号必须绑到 xiao.bu.tv.SQLiteEngine，符号对不上会 UnsatisfiedLinkError
+          READELF="$ANDROID_HOME/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          if [ -x "$READELF" ]; then
+            "$READELF" --dyn-syms "$SO" | grep -q "xiao_bu_tv_SQLiteEngine_nativeOpen" \
+              || { echo "libsqlitejni.so 的 JNI 符号不对"; exit 1; }
+            echo "JNI 符号校验通过"
+          else
+            echo "未找到 llvm-readelf，跳过 JNI 符号校验"
+          fi
+          echo "libsqlitejni.so 校验通过"
 
       - name: 4. Build ARM32 Release APK
         # 注意这里改成了 assembleArm32Release

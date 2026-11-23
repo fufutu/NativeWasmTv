@@ -68,21 +68,10 @@ android {
 
     namespace 'xiao.bu.tv'
     buildFeatures { buildConfig true }
-    // 频道搜索自带的 SQLite FTS5 驱动（src/main/cpp）。
-    // 用 -PnoNativeSearch 可以在环境没有 NDK 时跳过它，此时搜索功能自动降级为原来的模糊匹配。
-    // Android 原生库统一按 API 21 编译：本工程 minSdk 14 的老设备仍可加载，
-    // 而 NDK 对更低的 API 级别已经不再提供支持。
-    if (!project.hasProperty('noNativeSearch')) {
-        ndkVersion = project.findProperty('searchNdkVersion') ?: '26.1.10909125'
-        externalNativeBuild {
-            cmake {
-                path = file('src/main/cpp/CMakeLists.txt')
-                // 注意：AGP 的 arguments 只有方法形式（arguments "-Dfoo=bar"），
-                // 用 `arguments = [...]` 赋值会报 “Could not set unknown property 'arguments'”。
-                arguments "-DANDROID_PLATFORM=android-21"
-            }
-        }
-    }
+    // 频道搜索的原生 SQLite 驱动（src/main/cpp）不由 Gradle 编译：
+    // CI 里用 NDK 的 CMake 单独编出 libsqlitejni.so 放到 src/main/libs/armeabi-v7a/，
+    // 与其它预编译 so 一样走 jniLibs。这样 Android Gradle Plugin 的版本变化、
+    // 本地是否装 NDK 都不会影响这个工程的构建。
     // The prebuilt native libraries are already stripped; preserve the audited binaries.
     packagingOptions { jniLibs { keepDebugSymbols += ['**/*.so'] } }
     if (project.hasProperty('cjsV5Assets')) {
