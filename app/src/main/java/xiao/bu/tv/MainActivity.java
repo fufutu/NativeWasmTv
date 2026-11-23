@@ -915,18 +915,6 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     private int userScriptInstallGeneration;
     private FrameLayout voiceSwitchOverlay;
     private int voiceSwitchGeneration;
-    private final VoiceChannelMatcher.ExtraInfo voiceExtraInfo =
-            new VoiceChannelMatcher.ExtraInfo() {
-                @Override public List<VoiceChannelMatcher.Alias> aliases(int groupIndex,
-                        int channelIndex, Channel channel) {
-                    return voiceSeasonAliases(channel);
-                }
-                @Override public int hits(int groupIndex, int channelIndex,
-                        Channel channel) {
-                    return voiceChannelHits(channel);
-                }
-            };
-
     private String directHttpMediaUrl;
     private int directHlsFallbackRequestId = -1;
     private int directAudioFallbackRequestId = -1;
@@ -4104,14 +4092,15 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         if (text.length() == 0) {
             throw new ControlRequestException(400, "缺少语音识别文本");
         }
-        VoiceChannelMatcher.Result result = VoiceChannelMatcher.match(text,
-                ChannelCatalog.GROUPS, voiceExtraInfo);
-        if (result.isEmpty()) {
+        // 与网页搜索完全同一套：SQLite FTS5 检索 + 别名/权重/热度排序
+        List<ChannelTarget> candidates = ChannelSearchControl.candidates(this, request);
+        if (candidates.isEmpty()) {
             throw new ControlRequestException(404, "没有找到匹配的频道");
         }
-        JSONArray candidates = new JSONArray();
-        for (VoiceChannelMatcher.Candidate candidate : result.candidates) {
-            candidates.put(new JSONObject()
+        JSONArray payload = new JSONArray();
+        for (ChannelTarget candidate : candidates) {
+            payload.put(new JSONObject()
+                    .put("key", candidate.key)
                     .put("name", candidate.channelName)
                     .put("group", candidate.groupName)
                     .put("groupIndex", candidate.group)
@@ -4120,21 +4109,21 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                     .put("hits", candidate.hits)
                     .put("episodeOffset", candidate.episodeOffset));
         }
+        boolean single = candidates.size() == 1;
         if (!request.optBoolean("play", true)) {
             return new JSONObject().put("ok", true).put("action", "candidates")
-                    .put("confident", result.confident())
-                    .put("candidates", candidates).toString();
+                    .put("confident", single).put("candidates", payload).toString();
         }
-        if (result.confident()) {
-            VoiceChannelMatcher.Candidate best = result.best();
+        if (single) {
+            ChannelTarget best = candidates.get(0);
             switchToVoiceChannel(best);
             return new JSONObject().put("ok", true).put("action", "switch")
                     .put("name", best.channelName).put("group", best.groupName)
-                    .put("candidates", candidates).toString();
+                    .put("candidates", payload).toString();
         }
-        showVoiceChannelCandidates(text, result.candidates);
+        showVoiceChannelCandidates(text, candidates);
         return new JSONObject().put("ok", true).put("action", "candidates")
-                .put("autoPlaySeconds", 8).put("candidates", candidates).toString();
+                .put("autoPlaySeconds", 8).put("candidates", payload).toString();
     }
 
     /** 搜索索引单例。热度直接接现有的播放/命中次数，热度变化只影响排序、不重建索引。 */
@@ -4161,7 +4150,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         if (text.length() == 0) throw new ControlRequestException(400, "缺少搜索关键词");
         ChannelSearchIndex index = channelSearchIndex();
         if (!index.isAvailable()) throw new ControlRequestException(503, index.reason());
-        List<VoiceChannelMatcher.Candidate> candidates = ChannelSearchControl.candidates(this, request);
+        List<ChannelTarget> candidates = ChannelSearchControl.candidates(this, request);
         if (candidates.isEmpty()) throw new ControlRequestException(404, "没有找到匹配的频道");
         // 页面要能按 key 精准点播，所以候选列表用带 key 的查询结果
         JSONArray payload = ChannelSearchControl.query(this, request).optJSONArray("items");
@@ -4189,15 +4178,14 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         }
         String key = request.optString("key", "");
         if (key.length() == 0) throw new ControlRequestException(400, "缺少频道标识");
-        VoiceChannelMatcher.Candidate candidate = ChannelSearchControl.byKey(key);
+        ChannelTarget candidate = ChannelSearchControl.byKey(key);
         if (candidate == null) throw new ControlRequestException(404, "频道已不在目录中，请重新搜索");
         switchToVoiceChannel(candidate);
         return new JSONObject().put("ok", true).put("action", "switch")
                 .put("name", candidate.channelName).put("group", candidate.groupName).toString();
     }
 
-    private void switchToVoiceChannel(final VoiceChannelMatcher.Candidate candidate) {
-        applyVoiceSeasonStart(candidate);
+    private void switchToVoiceChannel(final ChannelTarget candidate) {
         try {
             handleWebControl(new JSONObject().put("action", "play")
                     .put("group", candidate.group)
@@ -4230,39 +4218,6 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         return file.length() == 0 ? null : file;
     }
 
-    private List<VoiceChannelMatcher.Alias> voiceSeasonAliases(Channel channel) {
-        List<VoiceChannelMatcher.Alias> result = new ArrayList<VoiceChannelMatcher.Alias>();
-        String channelId = cloudChannelId(channel);
-        if (channelId == null) {
-            return result;
-        }
-        CloudLiveService service = CloudLiveService.get(MainActivity.this);
-        if (service == null) {
-            return result;
-        }
-        List<CloudLiveStore.SeasonRange> seasons = service.seasons(channelId);
-        if (seasons == null || seasons.isEmpty()) {
-            return result;
-        }
-        String base = channel.name == null ? "" : channel.name.trim();
-        for (CloudLiveStore.SeasonRange season : seasons) {
-            int number = VoiceChannelMatcher.seasonNumber(season.name);
-            if (number <= 0) {
-                result.add(new VoiceChannelMatcher.Alias(base + " " + season.name,
-                        season.start));
-                continue;
-            }
-            result.add(new VoiceChannelMatcher.Alias(base + "第" + number + "季",
-                    season.start));
-            result.add(new VoiceChannelMatcher.Alias(base + " s" + number, season.start));
-            result.add(new VoiceChannelMatcher.Alias(base + " " + season.name,
-                    season.start));
-            result.add(new VoiceChannelMatcher.Alias(base + " 第" + number + "部",
-                    season.start));
-        }
-        return result;
-    }
-
     private int voiceChannelHits(Channel channel) {
         String channelId = cloudChannelId(channel);
         if (channelId == null) {
@@ -4272,43 +4227,19 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         return service == null ? 0 : service.hits(channelId);
     }
 
-    /** Tells the pseudo-live server to begin the matched channel at a season offset. */
-    private void applyVoiceSeasonStart(VoiceChannelMatcher.Candidate candidate) {
-        if (candidate == null || candidate.episodeOffset < 0) {
-            return;
-        }
-        ChannelCatalog.Group[] groups = ChannelCatalog.GROUPS;
-        if (groups == null || candidate.group < 0 || candidate.group >= groups.length) {
-            return;
-        }
-        ChannelCatalog.Group group = groups[candidate.group];
-        if (group == null || group.channels == null || candidate.channel < 0
-                || candidate.channel >= group.channels.length) {
-            return;
-        }
-        String channelId = cloudChannelId(group.channels[candidate.channel]);
-        if (channelId == null) {
-            return;
-        }
-        CloudLiveService service = CloudLiveService.get(MainActivity.this);
-        if (service != null) {
-            service.requestStartEpisode(channelId, candidate.episodeOffset);
-        }
-    }
-
     private void showVoiceChannelCandidates(final String text,
-            final List<VoiceChannelMatcher.Candidate> candidates) {
+            final List<ChannelTarget> candidates) {
         showChannelCandidateOverlay("语音选台", "识别为「" + text + "」，请选择要播放的频道", candidates);
     }
 
     /** 搜索结果也复用同一个浮层：候选按钮 + 8 秒倒计时 + 默认第一个。 */
     private void showSearchChannelCandidates(final String text,
-            final List<VoiceChannelMatcher.Candidate> candidates) {
+            final List<ChannelTarget> candidates) {
         showChannelCandidateOverlay("频道搜索", "搜索「" + text + "」，请选择要播放的频道", candidates);
     }
 
     private void showChannelCandidateOverlay(final String caption, final String detailText,
-            final List<VoiceChannelMatcher.Candidate> candidates) {
+            final List<ChannelTarget> candidates) {
         runOnUiThread(() -> {
             if (isFinishing() || !(root instanceof ViewGroup)) return;
             removeVoiceSwitchOverlay();
@@ -4345,7 +4276,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             countdown.setPadding(0, userScriptOverlayDp(10), 0, 0);
             Button first = null;
             for (int index = 0; index < candidates.size(); index++) {
-                final VoiceChannelMatcher.Candidate candidate = candidates.get(index);
+                final ChannelTarget candidate = candidates.get(index);
                 Button button = userScriptOverlayButton((index + 1) + ". "
                         + candidate.channelName + " · " + candidate.groupName);
                 button.setLayoutParams(new LinearLayout.LayoutParams(
@@ -4381,7 +4312,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     }
 
     private void scheduleVoiceSwitchCountdown(final View overlay, final TextView countdown,
-            final List<VoiceChannelMatcher.Candidate> candidates, final int generation) {
+            final List<ChannelTarget> candidates, final int generation) {
         final int[] remaining = {8};
         overlay.postDelayed(new Runnable() {
             @Override public void run() {

@@ -38,39 +38,39 @@ final class ChannelSearchControl {
     }
 
     /** 把搜索结果转成 TV 候选浮层能用的对象；位置用稳定键重新定位，避免目录刚变过时错位。 */
-    static List<VoiceChannelMatcher.Candidate> candidates(Context context, JSONObject request)
+    static List<ChannelTarget> candidates(Context context, JSONObject request)
             throws Exception {
         ChannelSearchIndex index = ChannelSearchIndex.get(context);
         String text = request.optString("text", request.optString("query", "")).trim();
-        if (text.length() == 0) return new ArrayList<VoiceChannelMatcher.Candidate>();
+        if (text.length() == 0) return new ArrayList<ChannelTarget>();
         if (!index.isAvailable()) {
             throw new ControlRequestException(503, index.reason());
         }
         List<ChannelSearchHit> hits = index.search(text, request.optInt("limit", 6));
-        List<VoiceChannelMatcher.Candidate> out = new ArrayList<VoiceChannelMatcher.Candidate>();
+        List<ChannelTarget> out = new ArrayList<ChannelTarget>();
         ChannelCatalog.Group[] groups = ChannelCatalog.GROUPS;
         for (ChannelSearchHit hit : hits) {
-            VoiceChannelMatcher.Candidate candidate = candidate(index, hit, groups);
+            ChannelTarget candidate = candidate(index, hit, groups);
             if (candidate != null) out.add(candidate);
         }
         return out;
     }
 
     /** 按稳定键精确播放（搜索页点某一条时用）。 */
-    static VoiceChannelMatcher.Candidate byKey(String key) {
+    static ChannelTarget byKey(String key) {
         ChannelCatalog.Group[] groups = ChannelCatalog.GROUPS;
         if (groups == null || key == null || key.length() == 0) return null;
         int[] position = ChannelSearchIndex.locate(key);
         if (position == null) return null;
         ChannelCatalog.Group group = groups[position[0]];
         Channel channel = group.channels[position[1]];
-        return new VoiceChannelMatcher.Candidate(position[0], position[1],
+        return new ChannelTarget(key, position[0], position[1],
                 group.displayTitle != null && group.displayTitle.length() > 0
                         ? group.displayTitle : group.title,
-                channel.name, 1.0d, 0, 0);
+                channel.name, 1.0d, 0, -1);
     }
 
-    private static VoiceChannelMatcher.Candidate candidate(ChannelSearchIndex index,
+    private static ChannelTarget candidate(ChannelSearchIndex index,
             ChannelSearchHit hit, ChannelCatalog.Group[] groups) {
         int[] position = ChannelSearchIndex.locate(hit.key);
         int groupPos = position != null ? position[0] : hit.groupPos;
@@ -80,10 +80,11 @@ final class ChannelSearchControl {
         if (group == null || group.channels == null || channelPos < 0
                 || channelPos >= group.channels.length) return null;
         Channel channel = group.channels[channelPos];
-        return new VoiceChannelMatcher.Candidate(groupPos, channelPos,
+        return new ChannelTarget(hit.key, groupPos, channelPos,
                 group.displayTitle != null && group.displayTitle.length() > 0
                         ? group.displayTitle : (group.title == null ? "" : group.title),
-                channel.name, hit.score, 0, (int) Math.min(Integer.MAX_VALUE, hit.hot));
+                channel.name, hit.score, (int) Math.min(Integer.MAX_VALUE, hit.hot),
+                -1);
     }
 
     private static JSONArray items(List<ChannelSearchHit> hits) throws JSONException {
