@@ -77,7 +77,9 @@ android {
         externalNativeBuild {
             cmake {
                 path = file('src/main/cpp/CMakeLists.txt')
-                arguments = ['-DANDROID_PLATFORM=android-21']
+                // 注意：AGP 的 arguments 只有方法形式（arguments "-Dfoo=bar"），
+                // 用 `arguments = [...]` 赋值会报 “Could not set unknown property 'arguments'”。
+                arguments "-DANDROID_PLATFORM=android-21"
             }
         }
     }
