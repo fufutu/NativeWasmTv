@@ -1,6 +1,14 @@
 buildscript {
     repositories {
+        // AGP 及构建脚本依赖：先走 Google，Maven Central 在 GitHub 共享出口 IP 上
+        // 经常返回 429（Too Many Requests），靠 gradle.properties 的重试与退避兜住。
         google()
+        // 阿里云镜像只给本机用（国内拉包快）。CI 上不加，避免镜像不可达时
+        // Gradle 会把该仓库标记为不可用，反而拖垮整次解析。
+        if (!System.getenv('CI')) {
+            maven { url 'https://maven.aliyun.com/repository/google' }
+            maven { url 'https://maven.aliyun.com/repository/public' }
+        }
         mavenCentral()
     }
     dependencies {
@@ -11,7 +19,10 @@ buildscript {
 allprojects {
     repositories {
         google()
+        if (!System.getenv('CI')) {
+            maven { url 'https://maven.aliyun.com/repository/google' }
+            maven { url 'https://maven.aliyun.com/repository/public' }
+        }
         mavenCentral()
-        maven { url 'https://maven.aliyun.com/repository/jcenter' }
     }
 }

@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 1. 还原签名文件
         run: |
@@ -20,10 +20,11 @@ jobs:
           ls -la fufutu-release.jks
 
       - name: 2. Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
+          cache: 'gradle'
 
       - name: 3. Make gradlew executable
         run: chmod +x gradlew
@@ -70,10 +71,25 @@ jobs:
 
       - name: 4. Build ARM32 Release APK
         # 注意这里改成了 assembleArm32Release
-        # 输出同时写文件，失败时由下一步把关键报错打成注解（页面上直接可见，不用翻日志）
+        # 依赖下载时 Maven Central 会偶发 429，这里对网络/限流类失败自动重试
         run: |
           set -o pipefail
-          ./gradlew :app:assembleArm32Release --stacktrace 2>&1 | tee "$RUNNER_TEMP/gradle.log"
+          LOG="$RUNNER_TEMP/gradle.log"
+          : > "$LOG"
+          for attempt in 1 2 3; do
+            echo "===== Gradle 第 $attempt 次尝试 =====" | tee -a "$LOG"
+            if ./gradlew :app:assembleArm32Release --stacktrace 2>&1 | tee -a "$LOG"; then
+              exit 0
+            fi
+            if ! grep -Eq "status code 429|Could not GET|Read timed out|Connection reset|Could not resolve" "$LOG"; then
+              echo "不是网络/限流类失败，直接退出" | tee -a "$LOG"
+              exit 1
+            fi
+            echo "命中网络限流，$((attempt * 30)) 秒后重试" | tee -a "$LOG"
+            sleep $((attempt * 30))
+          done
+          echo "三次尝试均失败" | tee -a "$LOG"
+          exit 1
 
       - name: 4b. 构建失败时把关键报错打成注解
         if: failure()
@@ -81,33 +97,41 @@ jobs:
           LOG="$RUNNER_TEMP/gradle.log"
           if [ ! -f "$LOG" ]; then echo "没有拿到 gradle 日志"; exit 0; fi
           python3 - "$LOG" <<'PY'
+          import re
           import sys
+
           path = sys.argv[1]
           lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
 
           def emit(text):
-              print("::error::" + text.replace("%", "%25").replace("\r", "").strip()[:300])
+              text = text.replace("%", "%25").replace("\r", "").strip()
+              if text:
+                  print("::error::" + text[:300])
 
           marks = [i for i, l in enumerate(lines) if "What went wrong" in l]
-          if not marks:
-              emit("没有找到 What went wrong，下面是最后 40 行")
-              for l in lines[-40:]:
-                  if l.strip():
-                      emit(l)
-              sys.exit(0)
-          start = max(0, marks[0] - 20)
-          end = min(len(lines), marks[0] + 55)
-          for l in lines[start:end]:
-              if l.strip():
+          if marks:
+              emit("---- What went wrong ----")
+              shown = 0
+              for l in lines[marks[0] + 1: marks[0] + 60]:
+                  # 只保留人类可读的结论，跳过 Gradle 内部栈帧
+                  if l.strip().startswith(("at ", "...", "org.gradle.", "java.base")):
+                      continue
                   emit(l)
+                  shown += 1
+                  if shown >= 25:
+                      break
+          else:
+              emit("日志里没有 What went wrong 段")
 
-          # javac / R8 的具体报错常常在别的段落，单独抓一遍
-          keys = ("error:", "错误:", ".java:", "Missing class", "CompilationError")
-          hits = [l for l in lines if any(k in l for k in keys)]
-          if hits:
-              emit("---- 编译/混淆的具体报错（最多 40 条）----")
-              for l in hits[:40]:
-                  emit(l)
+          # 网络限流、依赖解析、编译的具体报错单独再抓一遍
+          emit("---- 关键报错 ----")
+          pat = re.compile(
+              r"status code \d+|Could not (GET|resolve|download|find)"
+              r"|error:|错误:|Missing class|Execution failed|FAILURE:"
+          )
+          hits = [l for l in lines if pat.search(l)]
+          for l in hits[:25]:
+              emit(l)
           PY
 
       - name: 5. Upload APK
