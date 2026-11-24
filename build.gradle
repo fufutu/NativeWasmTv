@@ -23,6 +23,13 @@ allprojects {
             maven { url 'https://maven.aliyun.com/repository/google' }
             maven { url 'https://maven.aliyun.com/repository/public' }
         }
+        // jcenter 已经关停，Maven Central 上没有 ijkplayer-java（404），
+        // 只剩阿里云镜像还在供。这里只对这一个 group 生效，避免所有依赖
+        // 都去走境外镜像。
+        maven {
+            url 'https://maven.aliyun.com/repository/public'
+            content { includeGroup 'tv.danmaku.ijk.media' }
+        }
         mavenCentral()
     }
 }

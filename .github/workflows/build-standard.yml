@@ -75,17 +75,18 @@ jobs:
         run: |
           set -o pipefail
           LOG="$RUNNER_TEMP/gradle.log"
-          : > "$LOG"
           for attempt in 1 2 3; do
+            # 每次尝试单独一份日志，避免上一次的 429 关键字影响这一次的判定
+            : > "$LOG"
             echo "===== Gradle 第 $attempt 次尝试 =====" | tee -a "$LOG"
             if ./gradlew :app:assembleArm32Release --stacktrace 2>&1 | tee -a "$LOG"; then
               exit 0
             fi
-            if ! grep -Eq "status code 429|Could not GET|Read timed out|Connection reset|Could not resolve" "$LOG"; then
+            if ! grep -Eq "status code 429|Too Many Requests|Read timed out|Connection reset|Connect timed out" "$LOG"; then
               echo "不是网络/限流类失败，直接退出" | tee -a "$LOG"
               exit 1
             fi
-            echo "命中网络限流，$((attempt * 30)) 秒后重试" | tee -a "$LOG"
+            echo "命中网络类失败，$((attempt * 30)) 秒后重试" | tee -a "$LOG"
             sleep $((attempt * 30))
           done
           echo "三次尝试均失败" | tee -a "$LOG"
