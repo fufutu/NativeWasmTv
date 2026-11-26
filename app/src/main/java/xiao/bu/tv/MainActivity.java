@@ -8809,11 +8809,13 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         if (host == null || host.length() == 0 || port <= 0
                 || "127.0.0.1".equals(host) || "localhost".equals(host) || "::1".equals(host)) {
             // 探不出远端主机就不贸然判成断网，交回原有提示流程。
+            AppLog.i(TAG, "Network probe skipped endpoint=" + endpoint);
             callback.onResult(true);
             return;
         }
         final String targetHost = host;
         final int targetPort = port;
+        AppLog.i(TAG, "Network probe start " + targetHost + ":" + targetPort);
         Thread probe = new Thread(() -> {
             boolean reachable = false;
             java.net.Socket socket = new java.net.Socket();
@@ -10743,10 +10745,32 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         abortChannelSwitchAnimation();
         releasePlayer(true);
         hideLoading();
-        showChannelBar(currentChannel().name,message);
-        Toast.makeText(this,message,Toast.LENGTH_LONG).show();
-        if((autoSwitchSourceSeconds>0||neighborProbeEnabled)&&currentChannel().sourceCount()>1)
-            switchCustomSource(1,true,message,true);
+        String failureText=(message+" "+(detail==null?"":detail)).toLowerCase(java.util.Locale.US);
+        boolean networkish=failureText.contains("connect")||failureText.contains("timeout")
+                ||failureText.contains("超时")||failureText.contains("unreachable")
+                ||failureText.contains("enetunreach")||failureText.contains("unknownhost");
+        if(!networkish){
+            showChannelBar(currentChannel().name,message);
+            Toast.makeText(this,message,Toast.LENGTH_LONG).show();
+            if((autoSwitchSourceSeconds>0||neighborProbeEnabled)&&currentChannel().sourceCount()>1)
+                switchCustomSource(1,true,message,true);
+            return;
+        }
+        // 连接类失败（掐网/断网）不要停在提示上：先真连一次线路主机，
+        // 连不上就转“一直重连”的等候面板，连得上再走原来的换线路流程。
+        final int probeRequest = playRequestId;
+        probeSourceReachable(reachable -> {
+            if(isFinishing()||probeRequest!=playRequestId)return;
+            if(!reachable){
+                markNetworkFailure();
+                beginNetworkWaitAndRetry("播放中断");
+                return;
+            }
+            showChannelBar(currentChannel().name,message);
+            Toast.makeText(this,message,Toast.LENGTH_LONG).show();
+            if((autoSwitchSourceSeconds>0||neighborProbeEnabled)&&currentChannel().sourceCount()>1)
+                switchCustomSource(1,true,message,true);
+        });
     }
 
     private void armPlayerStartupWatchdog(final IMediaPlayer expected,final int request) {
