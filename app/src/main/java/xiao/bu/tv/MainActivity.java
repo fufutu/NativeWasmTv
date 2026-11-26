@@ -1229,14 +1229,9 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     private TextView networkWaitHint;
     private View networkWaitPulse;
     private android.animation.ObjectAnimator networkWaitPulseAnim;
-    private int networkWaitAttempt;
-    private long networkWaitNextAt;
-    private Runnable networkWaitTick;
-    private android.content.BroadcastReceiver networkWaitReceiver;
-    private String networkWaitChannelName = "";
     private boolean networkWaitRetryOrigin;
-    /** 网络健康判定：只聚合自身请求的成败证据，不主动探测。 */
-    private final NetworkHealth networkHealth = new NetworkHealth();
+    /** 失败重试循环：全局唯一的重试策略实现。 */
+    private final PlaybackRetryLoop retryLoop = new PlaybackRetryLoop();
     private int missingCodecSoftwareRetryRequestId = -1;
     private volatile int missingHardwareCodecRequestId = -1;
     private volatile String missingHardwareCodecMime = "";
@@ -1244,16 +1239,14 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         recordLoadError(message, null);
     }
 
-    /** 所有“这一路播不了”的路径都从这里过：先记证据，再统一决定要不要进等候面板。 */
+    /** 所有“这一路起不来”的路径都收敛到这里：交给重试循环，别的什么都不做。 */
     private void recordLoadError(String message, String detail) {
         loadError = message;
         loadErrorRequestId = playRequestId;
         logChannelSwitchStage(playRequestId, "load-failed");
-        String evidence = detail == null || detail.length() == 0 ? message : detail;
-        reportPlaybackFailure(evidence);
-        if (isDeviceNetworkDisconnected() || networkHealth.isLinkDown()) {
-            beginNetworkWaitAndRetry("画面中断");
-        }
+        AppLog.w(TAG, "Load failed: " + message
+                + (detail == null || detail.isEmpty() ? "" : " / " + detail));
+        retryLoop.onAttemptFailed();
     }
     private volatile boolean showLoadTiming;
     private volatile boolean showColorDebugInfo;
@@ -1515,6 +1508,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         setContentView(R.layout.activity_main);
 
         root = findViewById(R.id.root);
+        bindRetryLoop();
         playbackGestureTouchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
         configurePlaybackGestureExclusion();
         channelBar = findViewById(R.id.channel_bar);
@@ -7847,7 +7841,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                 || channelSwitchTimingStartedAt <= 0L || channelStartupTiming.finished(requestId)) return;
         logChannelSwitchStage(requestId, "load-ready");
         // 只要能拿到清单就是“链路是通的”，这条成功证据会清掉断网嫌疑。
-        networkHealth.reportSuccess("load-ready");
+        retryLoop.onAttemptSucceeded();
         AppLog.i(TAG, "Channel startup timing request=" + requestId + " "
                 + channelStartupTiming.format(requestId));
         if (debugInfoEnabled()) refreshVideoInfo();
@@ -7880,7 +7874,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     private void startChannelAfterProfile(int index, EpgManager.Program archive, String archiveUrl,
             boolean freshYangshipin) {
         // 用户主动换台（不是等待面板发起的重试）时，等候面板要让开。
-        if (!networkWaitRetryOrigin) hideNetworkWaitOverlay();
+        if (!networkWaitRetryOrigin) cancelNetworkWait();
         litePreparseRequest=-1;if(liteWebPreloader!=null)liteWebPreloader.cancelPending();
         if(channelHealth!=null)channelHealth.pause();healthStableAt=0;healthPosition=-1;healthNeighborRequest=-1;
         if (!openingQuickChannel && !requireGroupPassword(currentGroupIndex,
@@ -8734,55 +8728,20 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     }
 
     private void handleUnavailableSource(String label, String detail) {
-        recordLoadError(label);
+        recordLoadError(label, detail);
         if (refreshContinuousHttpPlayback(playRequestId, label)) return;
         if (PlaybackHttpError.isForbidden(detail)) {
             showPlaybackForbidden(currentChannel());
             return;
         }
         if (returnFromFailedSniffedPlayback(label)) return;
-        String message = detail == null ? "" : detail.toLowerCase(java.util.Locale.US);
-        reportPlaybackFailure(detail);
-        boolean disconnected = isDeviceNetworkDisconnected();
-        boolean connectLevelFailure = message.contains("unknownhost")
-                || message.contains("unable to resolve host")
-                || message.contains("timeout") || message.contains("timed out")
-                || message.contains("network is unreachable") || message.contains("enetunreach")
-                || message.contains("connection reset")
-                || message.contains("网络") || message.contains("超时")
-                || message.contains("err_name_not_resolved") || message.contains("err_internet_disconnected");
-        if (disconnected || connectLevelFailure) {
+        // 重试循环已经接手：停掉常规的换线路/提示，避免两处同时驱动播放。
+        if (retryLoop.isWaiting()) {
             abortChannelSwitchAnimation();
             hideLoading();
-            // 判定交给 NetworkHealth：多个目标同时失败或持续零成功才算链路不可用。
-            if (disconnected || networkHealth.isLinkDown()) {
-                beginNetworkWaitAndRetry(disconnected ? "网络连接异常" : "画面中断");
-                return;
-            }
-            if (currentChannel().sourceCount() > 1) {
-                switchCustomSource(1, true, label, true);
-                return;
-            }
-            showChannelBar(currentChannel().name, "网络连接异常，请检查网络后重试");
-            Toast.makeText(this, "网络连接异常，请检查网络连接", Toast.LENGTH_LONG).show();
             return;
         }
-        // A backup may be local/LAN even when legacy ConnectivityManager reports
-        // no active Internet network. Try each configured line once either way.
         switchCustomSource(1, true, label, true);
-    }
-
-    /** 把一次播放失败折算成网络健康证据；判定逻辑全部在 NetworkHealth 里。 */
-    private void reportPlaybackFailure(String detail) {
-        String text = detail == null ? "" : detail;
-        String host = NetworkHealth.hostOf(text);
-        if (host.length() == 0) {
-            try {
-                Channel channel = currentChannel();
-                if (channel != null) host = NetworkHealth.hostOfUrl(channel.sourceUrl(currentSourceIndex));
-            } catch (IllegalStateException ignored) { }
-        }
-        networkHealth.reportFailure(host, NetworkHealth.classify(text));
     }
 
     private boolean isDeviceNetworkDisconnected() {
@@ -8796,44 +8755,38 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         return false;
     }
 
-    private static final long NETWORK_WAIT_MAX_DELAY_MS = 30000L;
-
-    /**
-     * 断网/线路长时间失败后进入“一直重连”状态：屏幕不再是黑的，而是一块
-     * 明显的等候面板；网络恢复会立即重连，不会停在放弃状态。
-     */
-    private void beginNetworkWaitAndRetry(final String reason) {
-        if (isFinishing()) return;
-        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
-            runOnUiThread(() -> beginNetworkWaitAndRetry(reason));
-            return;
-        }
-        String channelName = "";
-        try {
-            Channel channel = currentChannel();
-            if (channel != null) channelName = channel.name;
-        } catch (IllegalStateException ignored) { }
-        networkWaitChannelName = channelName;
-        boolean waiting = networkWaitOverlay != null
-                && networkWaitOverlay.getVisibility() == View.VISIBLE;
-        if (!waiting) {
-            networkWaitAttempt = 0;
-            AppLog.w(TAG, "Network wait started reason=" + reason);
-            hideLoading();
-            showNetworkWaitOverlay();
-            registerNetworkWaitReceiver();
-        }
-        // 面板已经亮着就不要再重置计数，重试继续由计时器接手。
-        scheduleNetworkWaitTick(waiting ? 15000L : 1000L);
+    /** 重试循环与界面的一次性接线。 */
+    private void bindRetryLoop() {
+        retryLoop.setListener(new PlaybackRetryLoop.Listener() {
+            @Override public void onRetryDue() {
+                retryPlaybackAttempt();
+            }
+            @Override public void onWaiting(int attempt, long delayMs) {
+                showNetworkWait(attempt, delayMs);
+            }
+            @Override public void onRecovered() {
+                hideNetworkWaitOverlay();
+            }
+        });
     }
 
-    private void showNetworkWaitOverlay() {
+    /** 重试循环要求再试一次：真的重新起一路播放，失败会自己回到循环里。 */
+    private void retryPlaybackAttempt() {
+        if (isFinishing()) return;
+        hideLoading();
+        networkWaitRetryOrigin = true;
+        try { startChannel(currentChannelIndex); }
+        finally { networkWaitRetryOrigin = false; }
+    }
+
+    /** 等候面板展示：只负责画出来，节奏与文案数据都来自重试循环。 */
+    private void showNetworkWait(int attempt, long delayMs) {
         if (!(root instanceof ViewGroup)) return;
         if (networkWaitOverlay == null) buildNetworkWaitOverlay();
         if (networkWaitOverlay == null) return;
-        networkWaitTitle.setText(isDeviceNetworkDisconnected()
-                ? "网络已断开" : "画面中断，正在持续重连");
-        networkWaitDetail.setText("正在自动重试，请稍候…");
+        networkWaitTitle.setText("画面中断，正在持续重连");
+        networkWaitDetail.setText("已重试 " + attempt + " 次 · "
+                + ((delayMs + 999L) / 1000L) + " 秒后再试");
         networkWaitOverlay.setVisibility(View.VISIBLE);
         networkWaitOverlay.bringToFront();
         // 面板是全屏的，别把右上角时钟和频道卡片压掉。
@@ -8907,65 +8860,6 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         try { networkWaitPulseAnim.start(); } catch (RuntimeException ignored) { }
     }
 
-    private void scheduleNetworkWaitTick(long delayMs) {
-        cancelNetworkWaitTick();
-        networkWaitNextAt = SystemClock.elapsedRealtime() + delayMs;
-        networkWaitTick = new Runnable() {
-            @Override public void run() {
-                if (isFinishing() || networkWaitOverlay == null
-                        || networkWaitOverlay.getVisibility() != View.VISIBLE) return;
-                String currentName = "";
-                try {
-                    Channel channel = currentChannel();
-                    if (channel != null) currentName = channel.name;
-                } catch (IllegalStateException ignored) { }
-                if (currentName.length() > 0 && networkWaitChannelName.length() > 0
-                        && !currentName.equals(networkWaitChannelName)) {
-                    // 用户已经换台，这段等待就该结束。
-                    cancelNetworkWait();
-                    return;
-                }
-                networkWaitAttempt++;
-                boolean linkDown = isDeviceNetworkDisconnected() || networkHealth.isLinkDown();
-                networkWaitTitle.setText(linkDown
-                        ? (isDeviceNetworkDisconnected() ? "网络已断开" : "画面中断，正在持续重连")
-                        : "正在重新连接");
-                long delay = linkDown ? networkWaitDelay(networkWaitAttempt) : 15000L;
-                networkWaitDetail.setText("已重试 " + networkWaitAttempt + " 次 · "
-                        + ((delay + 999L) / 1000L) + " 秒后再试");
-                scheduleNetworkWaitTick(delay);
-                // 重试本身就是探测：每一轮都真去起一次播放，成功出帧就自动收面板。
-                networkWaitRetryOrigin = true;
-                try { startChannel(currentChannelIndex); }
-                finally { networkWaitRetryOrigin = false; }
-            }
-        };
-        channelBar.postDelayed(networkWaitTick, delayMs);
-    }
-
-    private static long networkWaitDelay(int attempt) {
-        long delay = attempt <= 1 ? 1000L : (1000L << Math.min(attempt - 1, 5));
-        return Math.min(NETWORK_WAIT_MAX_DELAY_MS, delay);
-    }
-
-    private void cancelNetworkWaitTick() {
-        if (networkWaitTick != null && channelBar != null) {
-            channelBar.removeCallbacks(networkWaitTick);
-        }
-        networkWaitTick = null;
-    }
-
-    private void cancelNetworkWait() {
-        cancelNetworkWaitTick();
-        unregisterNetworkWaitReceiver();
-        if (networkWaitPulseAnim != null) {
-            try { networkWaitPulseAnim.cancel(); } catch (RuntimeException ignored) { }
-        }
-        if (networkWaitOverlay != null) networkWaitOverlay.setVisibility(View.GONE);
-        networkWaitAttempt = 0;
-        networkWaitChannelName = "";
-    }
-
     /** 关掉等候面板；播放一旦恢复就调用它。 */
     private void hideNetworkWaitOverlay() {
         if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
@@ -8974,43 +8868,17 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         }
         if (networkWaitOverlay == null
                 || networkWaitOverlay.getVisibility() != View.VISIBLE) return;
-        cancelNetworkWait();
+        if (networkWaitPulseAnim != null) {
+            try { networkWaitPulseAnim.cancel(); } catch (RuntimeException ignored) { }
+        }
+        networkWaitOverlay.setVisibility(View.GONE);
         AppLog.i(TAG, "Network wait finished");
     }
 
-    private void registerNetworkWaitReceiver() {
-        if (networkWaitReceiver != null) return;
-        networkWaitReceiver = new android.content.BroadcastReceiver() {
-            @Override public void onReceive(android.content.Context context,
-                    android.content.Intent intent) {
-                if (isDeviceNetworkDisconnected()) return;
-                if (networkWaitOverlay == null
-                        || networkWaitOverlay.getVisibility() != View.VISIBLE) return;
-                // 网络一恢复立刻重连，不用等退避计时走完。
-                AppLog.i(TAG, "Network restored while waiting; retrying immediately");
-                cancelNetworkWaitTick();
-                networkWaitTitle.setText("正在重新连接");
-                networkWaitDetail.setText("正在自动重试，请稍候…");
-                networkWaitRetryOrigin = true;
-                try { startChannel(currentChannelIndex); }
-                finally { networkWaitRetryOrigin = false; }
-                scheduleNetworkWaitTick(12000L);
-            }
-        };
-        try {
-            registerReceiver(networkWaitReceiver,
-                    new android.content.IntentFilter(
-                            android.net.ConnectivityManager.CONNECTIVITY_ACTION));
-        } catch (RuntimeException error) {
-            AppLog.w(TAG, "Unable to register network wait receiver", error);
-            networkWaitReceiver = null;
-        }
-    }
-
-    private void unregisterNetworkWaitReceiver() {
-        if (networkWaitReceiver == null) return;
-        try { unregisterReceiver(networkWaitReceiver); } catch (RuntimeException ignored) { }
-        networkWaitReceiver = null;
+    /** 用户换台或退出：整轮重试结束。 */
+    private void cancelNetworkWait() {
+        retryLoop.cancel();
+        hideNetworkWaitOverlay();
     }
 
     private boolean fallbackMissingSystemSource(Channel channel,int what){
@@ -10460,7 +10328,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         nextPlayer.setOnPreparedListener(mediaPlayer -> {
             if (player != mediaPlayer || sourceRequestId != playRequestId) return;
             logChannelSwitchStage(sourceRequestId, "player-prepared");
-            networkHealth.reportSuccess("player-prepared");
+            retryLoop.onAttemptSucceeded();
             hideNetworkWaitOverlay();
             prepared = true;
             loadErrorRequestId = -1;
@@ -10680,16 +10548,11 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     private void failPlayerStartup(int request, IMediaPlayer expected, String message, String detail) {
         if(request!=playRequestId||player!=expected||isFinishing())return;
         AppLog.w(TAG,"Player startup failed request="+request+" message="+message+" detail="+detail);
-        recordLoadError(message);
+        recordLoadError(message, detail);
         abortChannelSwitchAnimation();
         releasePlayer(true);
         hideLoading();
-        reportPlaybackFailure(message+" "+(detail==null?"":detail));
-        if(isDeviceNetworkDisconnected()||networkHealth.isLinkDown()){
-            // 证据显示链路拿不到数据：不要停在提示上，亮等候面板一直重试。
-            beginNetworkWaitAndRetry("画面中断");
-            return;
-        }
+        if (retryLoop.isWaiting()) return;
         showChannelBar(currentChannel().name,message);
         Toast.makeText(this,message,Toast.LENGTH_LONG).show();
         if((autoSwitchSourceSeconds>0||neighborProbeEnabled)&&currentChannel().sourceCount()>1)
@@ -11287,7 +11150,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                     return;
                 }
                 logChannelSwitchStage(sourceRequestId, "player-prepared");
-                networkHealth.reportSuccess("player-prepared");
+                retryLoop.onAttemptSucceeded();
                 hideNetworkWaitOverlay();
                 prepared = true;
             loadErrorRequestId = -1;
@@ -13256,11 +13119,9 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         }
 
         playbackRecoveryAttempts = 0;
-        reportPlaybackFailure(reason);
-        if (isDeviceNetworkDisconnected() || networkHealth.isLinkDown()) {
-            // 判定链路拿不到数据时一直重连，不要停在黑屏上。
+        retryLoop.onAttemptFailed();
+        if (retryLoop.isWaiting()) {
             abortChannelSwitchAnimation();
-            beginNetworkWaitAndRetry(decoderFailure ? "解码器恢复失败" : "画面中断");
             return;
         }
         finishStalledRecoveryFallback(reason, decoderFailure, legacyHlsFailure, quickChannel);
@@ -13355,10 +13216,8 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             releasePlayer(true);
             abortChannelSwitchAnimation();
             hideLoading();
-            if (isDeviceNetworkDisconnected()) {
-                beginNetworkWaitAndRetry("直播线路重连失败");
-                return true;
-            }
+            retryLoop.onAttemptFailed();
+            if (retryLoop.isWaiting()) return true;
             showChannelBar(currentChannel().name, "直播线路重连失败，请重试或切换线路");
             return true;
         }
@@ -18554,18 +18413,11 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         clearPendingPlayer();
         releasePlayer(true);
         showLoading(currentChannel().name, "直播连接中断，正在重新连接");
-        final long waitingSince = SystemClock.elapsedRealtime();
         channelBar.postDelayed(new Runnable() {
             @Override public void run() {
                 if (requestId != playRequestId || isFinishing()) return;
-                if (isDeviceNetworkDisconnected() || networkHealth.isLinkDown()) {
-                    if (SystemClock.elapsedRealtime() - waitingSince < 30000L) {
-                        channelBar.postDelayed(this, 500L);
-                    } else {
-                        hideLoading();
-                        recordLoadError("网络连接异常，请恢复网络后重试");
-                        beginNetworkWaitAndRetry("网络连接异常");
-                    }
+                if (retryLoop.isWaiting()) {
+                    hideLoading();
                     return;
                 }
                 startChannel(currentChannelIndex);
