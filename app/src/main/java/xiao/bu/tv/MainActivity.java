@@ -4284,14 +4284,15 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             Button first = null;
             for (int index = 0; index < candidates.size(); index++) {
                 final ChannelTarget candidate = candidates.get(index);
-                Button button = userScriptOverlayButton((index + 1) + ". "
+                final int position = index + 1;
+                Button button = userScriptOverlayButton(position + ". "
                         + candidate.channelName + " · " + candidate.groupName);
                 button.setLayoutParams(new LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT,
                         LinearLayout.LayoutParams.WRAP_CONTENT));
                 button.setOnClickListener(v -> {
                     if (generation != voiceSwitchGeneration) return;
-                    AppLog.d(VOICE_OVERLAY_LOG, "click #" + (index + 1) + " "
+                    AppLog.d(VOICE_OVERLAY_LOG, "click #" + position + " "
                             + candidate.channelName);
                     removeVoiceSwitchOverlay();
                     switchToVoiceChannel(candidate);
