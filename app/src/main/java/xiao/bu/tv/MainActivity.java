@@ -8772,8 +8772,12 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
      * 断网/线路长时间失败后进入“一直重连”状态：屏幕不再是黑的，而是一块
      * 明显的等候面板；网络恢复会立即重连，不会停在放弃状态。
      */
-    private void beginNetworkWaitAndRetry(String reason) {
+    private void beginNetworkWaitAndRetry(final String reason) {
         if (isFinishing()) return;
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            runOnUiThread(() -> beginNetworkWaitAndRetry(reason));
+            return;
+        }
         String channelName = "";
         try {
             Channel channel = currentChannel();
@@ -8796,6 +8800,13 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         networkWaitDetail.setText("正在自动重连，请稍候…");
         networkWaitOverlay.setVisibility(View.VISIBLE);
         networkWaitOverlay.bringToFront();
+        // 面板是全屏的，别把右上角时钟和频道卡片压掉。
+        if (videoClock != null && videoClock.getVisibility() == View.VISIBLE) {
+            videoClock.bringToFront();
+        }
+        if (channelBar != null && channelBar.getVisibility() == View.VISIBLE) {
+            channelBar.bringToFront();
+        }
         startNetworkWaitPulse();
     }
 
@@ -8923,6 +8934,10 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
 
     /** 关掉等候面板；播放一旦恢复就调用它。 */
     private void hideNetworkWaitOverlay() {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            runOnUiThread(this::hideNetworkWaitOverlay);
+            return;
+        }
         if (networkWaitOverlay == null
                 || networkWaitOverlay.getVisibility() != View.VISIBLE) return;
         cancelNetworkWait();
@@ -10411,6 +10426,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         nextPlayer.setOnPreparedListener(mediaPlayer -> {
             if (player != mediaPlayer || sourceRequestId != playRequestId) return;
             logChannelSwitchStage(sourceRequestId, "player-prepared");
+            hideNetworkWaitOverlay();
             prepared = true;
             loadErrorRequestId = -1;
             audioOnlyPlayback = radioChannel || !systemVideo;
