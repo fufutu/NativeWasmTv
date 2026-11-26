@@ -801,7 +801,9 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                     else startPlayer(channel,url,backgroundSoftware,backgroundDirect);
                 }
                 catch (IOException | RuntimeException error) {
-                    hideLoading(); showChannelBar(channel.name,"恢复播放失败，请重试");
+                    hideLoading();
+                    recordLoadError("恢复播放失败", error.toString());
+                    showChannelBar(channel.name,"恢复播放失败，请重试");
                     AppLog.w(TAG,"Unable to resume foreground playback",error);
                 }
             }
@@ -8282,7 +8284,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                                         : !CjsSource.isSource(siteId) && CjsPluginRuntime.isInstalled(siteId))) {
                                 // A cancelled old install must not fail the newly selected
                                 // channel, or block a plugin that is now available locally.
-                                startChannel(currentChannelIndex);
+                                continueAttempt(currentChannelIndex);
                                 return;
                             }
                             if (isPluginDownloadNetworkError(error)
@@ -8297,7 +8299,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                                         if (pendingCjsChannelIndex < 0 || isFinishing()
                                                 || startupMaintenanceDestroyed || multimediaSuspended
                                                 || !TextUtils.equals(installTarget, pendingPluginTimingTarget)) return;
-                                        startChannel(currentChannelIndex);
+                                        continueAttempt(currentChannelIndex);
                                     }
                                 };
                                 root.postDelayed(pendingCjsInstallRetry, retry == 1 ? 1000L : 2500L);
@@ -8314,9 +8316,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                         AppLog.i(TAG, "CJS plugin activated version=" + version);
                         pendingPluginTimingMs = Math.max(0, SystemClock.elapsedRealtime() - pendingPluginTimingStart);
                         // 插件就绪后继续这一轮重试，别把等候面板拆掉。
-                        networkWaitRetryOrigin = true;
-                        try { startChannel(currentChannelIndex); }
-                        finally { networkWaitRetryOrigin = false; }
+                        continueAttempt(currentChannelIndex);
                     }
                 });
             }
@@ -8766,6 +8766,12 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         // 从头走一遍：地址也重新解析，避免一直复用同一个过期线路。
         try { startChannel(currentChannelIndex, null, null, true); }
         finally { networkWaitRetryOrigin = false; }
+    }
+
+    /** 同一次尝试内的内部续跑：只起播放，不拆等候面板。 */
+    private void continueAttempt(int index) {
+        networkWaitRetryOrigin = true;
+        try { startChannel(index); } finally { networkWaitRetryOrigin = false; }
     }
 
     /** 等候面板展示：只负责画出来，节奏与文案数据都来自重试循环。 */
@@ -9367,9 +9373,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                 } else {
                     AppLog.w(TAG, "YSP resolve failed for " + playbackChannel.name
                             + ": " + reason);
-                    abortChannelSwitchAnimation();
-                    hideLoading();
-                    showChannelBar(playbackChannel.name, "央视频源解析失败: " + reason);
+                    handleUnavailableSource("央视频解析失败", reason);
                 }
             }
         });
@@ -10045,6 +10049,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             }
             abortChannelSwitchAnimation();
             hideLoading();
+            recordLoadError("连接失败", error.getMessage());
             showChannelBar(channel.name, "连接失败: " + error.getMessage());
         }
     }
@@ -10630,6 +10635,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             if (player != null) recoverStalledPlayback(requestId, player,"system HLS compatibility open failed");
             else {
                 hideLoading();
+                recordLoadError("旧系统兼容播放失败", null);
                 showChannelBar(channel.name,"旧系统兼容播放失败，请重试或切换线路");
             }
         }
@@ -15530,6 +15536,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             if (returnFromFailedSniffedPlayback("资源连接失败")) return;
             abortChannelSwitchAnimation();
             hideLoading();
+            recordLoadError("视频界面恢复失败", error.getMessage());
             showChannelBar(channel.name, "视频界面恢复失败: " + error.getMessage());
         }
     }
