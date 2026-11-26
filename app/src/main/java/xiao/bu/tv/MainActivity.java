@@ -8803,7 +8803,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         FrameLayout overlay = new FrameLayout(this);
         // 深青→暖琥珀的渐变，刻意避开纯黑，避免被当成“电视已关机”。
         GradientDrawable background = new GradientDrawable(
-                GradientDrawable.ORIENTATION_BOTTOM_TOP,
+                GradientDrawable.Orientation.BOTTOM_TOP,
                 new int[]{0xFF3A2A18, 0xFF0E2E37});
         overlay.setBackgroundDrawable(background);
         overlay.setClickable(true);
