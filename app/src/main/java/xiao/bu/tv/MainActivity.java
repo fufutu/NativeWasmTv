@@ -914,6 +914,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     private FrameLayout userScriptInstallOverlay;
     private int userScriptInstallGeneration;
     private FrameLayout voiceSwitchOverlay;
+    private Button voiceSwitchDefaultButton;
     private int voiceSwitchGeneration;
     private String directHttpMediaUrl;
     private int directHlsFallbackRequestId = -1;
@@ -4247,7 +4248,10 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             final FrameLayout overlay = new FrameLayout(this);
             overlay.setBackgroundColor(0xb8000000);
             overlay.setClickable(true);
-            overlay.setFocusable(true);
+            // 浮层容器自身不接受焦点：否则焦点会先落在浮层上，
+            // 遥控器第一次按“确定”只是把焦点挪进候选按钮，要按第二次才真正选中。
+            overlay.setFocusable(false);
+            overlay.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
             overlay.setContentDescription(caption);
             overlay.setOnClickListener(v -> {
                 if (generation == voiceSwitchGeneration) {
@@ -4257,6 +4261,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
             card.setClickable(true);
+            card.setFocusable(false);
             card.setPadding(userScriptOverlayDp(28), userScriptOverlayDp(24),
                     userScriptOverlayDp(28), userScriptOverlayDp(22));
             GradientDrawable background = new GradientDrawable();
@@ -4307,6 +4312,18 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             overlay.bringToFront();
             ensureFlyMouseOnTop();
             if (first != null) first.requestFocus();
+            voiceSwitchDefaultButton = first;
+            if (first != null) {
+                final Button focusTarget = first;
+                // 刚 addView 时还没测量布局，requestFocus 可能被静默丢弃；
+                // 下一帧再请求一次，确保浮层一出现焦点就落在第一个候选上。
+                overlay.post(() -> {
+                    if (voiceSwitchOverlay == overlay
+                            && voiceSwitchDefaultButton == focusTarget) {
+                        focusTarget.requestFocus();
+                    }
+                });
+            }
             scheduleVoiceSwitchCountdown(overlay, countdown, candidates, generation);
         });
     }
@@ -4332,6 +4349,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
 
     private void removeVoiceSwitchOverlay() {
         voiceSwitchGeneration++;
+        voiceSwitchDefaultButton = null;
         FrameLayout overlay = voiceSwitchOverlay;
         voiceSwitchOverlay = null;
         if (overlay != null) {
@@ -4340,6 +4358,20 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         }
         if (webSourceView != null && webSourceView.isPageVisible()) webSourceView.requestFocus();
         ensureFlyMouseOnTop();
+    }
+
+    /** 当前焦点是否已经落在浮层里的候选按钮上（而不是浮层容器或网页）。 */
+    private boolean isVoiceSwitchCandidateFocused() {
+        View focused = getCurrentFocus();
+        if (!(focused instanceof Button)) return false;
+        View overlay = voiceSwitchOverlay;
+        if (overlay == null) return false;
+        ViewParent parent = focused.getParent();
+        while (parent != null) {
+            if (parent == overlay) return true;
+            parent = parent.getParent();
+        }
+        return false;
     }
 
     private String handleWifiDirect(JSONObject request) throws Exception {
@@ -17724,6 +17756,17 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             if (event.getAction() == KeyEvent.ACTION_DOWN
                     && (keyCode == KeyEvent.KEYCODE_BACK || keyCode == KeyEvent.KEYCODE_MENU)) {
                 removeVoiceSwitchOverlay();
+                return true;
+            }
+            // 焦点还没落到候选按钮上时（浮层刚弹出、或焦点停在网页/浮层容器），
+            // 第一次“确定”直接播放默认候选（也就是第一个），不再被消耗在搬焦点上。
+            if ((keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER)
+                    && !isVoiceSwitchCandidateFocused()) {
+                if (event.getAction() == KeyEvent.ACTION_UP
+                        && event.getRepeatCount() == 0) {
+                    Button target = voiceSwitchDefaultButton;
+                    if (target != null) target.performClick();
+                }
                 return true;
             }
             return super.dispatchKeyEvent(event);
