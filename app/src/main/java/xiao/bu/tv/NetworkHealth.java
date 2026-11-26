@@ -3,7 +3,6 @@ package xiao.bu.tv;
 import android.os.SystemClock;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -14,10 +13,11 @@ import java.util.regex.Pattern;
  * <p>被路由器/iptables 封网时链路仍在、系统依旧报“已联网”，也没有任何广播，
  * 唯一可靠的证据是应用发出的请求持续失败。判定口径参照主流客户端做法：
  * <ul>
- *   <li>多个不同目标同时出现传输层失败 → 链路不可用；</li>
- *   <li>零成功且失败次数持续累积 → 同样视为链路不可用；</li>
- *   <li>只有单个目标失败、或对方明确拒绝连接 → 归为目标/线路问题；</li>
- *   <li>任何一次请求成功即清除证据，出帧即恢复。</li>
+ *   <li>出现连接级失败（超时/不可达/DNS 失败/重置/HTTP 0）→ 链路不可用，
+ *       由重试循环反复验证，成功一次即恢复；</li>
+ *   <li>对方明确拒绝连接（服务进程不在但链路通）→ 归为目标/线路问题；</li>
+ *   <li>内容层错误（解码失败、缓冲停滞、HTTP 状态码）不参与链路判定；</li>
+ *   <li>任何一次请求成功即清除证据。</li>
  * </ul>
  * 判定只发生在这里，播放代码只负责上报，界面只读取状态。
  */
@@ -29,9 +29,6 @@ final class NetworkHealth {
     enum State { OK, SOURCE_DOWN, LINK_DOWN }
 
     private static final long WINDOW_MS = 60000L;
-    private static final long NO_SUCCESS_MS = 20000L;
-    private static final int LINK_FAILURE_COUNT = 2;
-    private static final int LINK_DISTINCT_HOSTS = 2;
 
     private static final class Failure {
         final long at;
@@ -47,7 +44,6 @@ final class NetworkHealth {
 
     private final Object lock = new Object();
     private final ArrayList<Failure> failures = new ArrayList<>();
-    private long lastSuccessAt = Long.MIN_VALUE / 2;
     private volatile State state = State.OK;
 
     State state() {
@@ -60,7 +56,6 @@ final class NetworkHealth {
 
     void reportSuccess(String host) {
         synchronized (lock) {
-            lastSuccessAt = SystemClock.elapsedRealtime();
             failures.clear();
             setState(State.OK, "success host=" + host);
         }
@@ -72,7 +67,7 @@ final class NetworkHealth {
             long now = SystemClock.elapsedRealtime();
             failures.add(new Failure(now, host == null ? "" : host, kind));
             prune(now);
-            setState(recompute(now), "failure host=" + host + " kind=" + kind);
+            setState(recompute(), "failure host=" + host + " kind=" + kind);
         }
     }
 
@@ -97,19 +92,15 @@ final class NetworkHealth {
         }
     }
 
-    private State recompute(long now) {
+    private State recompute() {
         int transport = 0;
         int refused = 0;
-        HashSet<String> hosts = new HashSet<>();
         for (Failure failure : failures) {
             switch (failure.kind) {
                 case DNS_FAIL:
                 case CONNECT_TIMEOUT:
                 case RESET:
                     transport++;
-                    if (failure.host.length() > 0) {
-                        hosts.add(failure.host);
-                    }
                     break;
                 case CONNECT_REFUSED:
                     refused++;
@@ -118,15 +109,10 @@ final class NetworkHealth {
                     break;
             }
         }
-        if (hosts.size() >= LINK_DISTINCT_HOSTS) {
-            return State.LINK_DOWN;
-        }
-        if (transport >= LINK_FAILURE_COUNT && now - lastSuccessAt >= NO_SUCCESS_MS) {
-            return State.LINK_DOWN;
-        }
-        if (transport > 0 || refused > 0) {
-            return State.SOURCE_DOWN;
-        }
+        // 内容主机的连接级失败只可能是“链路上拿不到数据”：断网、掐网、路由黑洞
+        // 在客户端看来完全一样，因此一次就按链路不可用处理，交给重试循环去验证。
+        if (transport >= 1) return State.LINK_DOWN;
+        if (refused >= 1) return State.SOURCE_DOWN;
         return State.OK;
     }
 
@@ -141,6 +127,10 @@ final class NetworkHealth {
             return Kind.DNS_FAIL;
         }
         if (t.contains("enetunreach") || t.contains("network is unreachable")) {
+            return Kind.CONNECT_TIMEOUT;
+        }
+        // 解析/接口逻辑里的 “HTTP 0”、auth-http-0 都是“一个字节都没拿到”，属于传输层失败。
+        if (t.contains("http 0") || t.contains("http-0") || t.contains("auth-http")) {
             return Kind.CONNECT_TIMEOUT;
         }
         if (t.contains("timeout") || t.contains("timed out") || t.contains("超时")) {

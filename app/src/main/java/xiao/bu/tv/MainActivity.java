@@ -1241,9 +1241,19 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     private volatile int missingHardwareCodecRequestId = -1;
     private volatile String missingHardwareCodecMime = "";
     private void recordLoadError(String message) {
+        recordLoadError(message, null);
+    }
+
+    /** 所有“这一路播不了”的路径都从这里过：先记证据，再统一决定要不要进等候面板。 */
+    private void recordLoadError(String message, String detail) {
         loadError = message;
         loadErrorRequestId = playRequestId;
         logChannelSwitchStage(playRequestId, "load-failed");
+        String evidence = detail == null || detail.length() == 0 ? message : detail;
+        reportPlaybackFailure(evidence);
+        if (isDeviceNetworkDisconnected() || networkHealth.isLinkDown()) {
+            beginNetworkWaitAndRetry("画面中断");
+        }
     }
     private volatile boolean showLoadTiming;
     private volatile boolean showColorDebugInfo;
@@ -8916,25 +8926,18 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                     return;
                 }
                 networkWaitAttempt++;
-                if (isDeviceNetworkDisconnected() || networkHealth.isLinkDown()) {
-                    if (isDeviceNetworkDisconnected()) {
-                        networkWaitTitle.setText("网络已断开");
-                    } else {
-                        networkWaitTitle.setText("画面中断，正在持续重连");
-                    }
-                    long delay = networkWaitDelay(networkWaitAttempt);
-                    networkWaitDetail.setText("已重试 " + networkWaitAttempt + " 次 · "
-                            + ((delay + 999L) / 1000L) + " 秒后再试");
-                    scheduleNetworkWaitTick(delay);
-                    return;
-                }
-                networkWaitTitle.setText("正在重新连接");
-                networkWaitDetail.setText("正在自动重试，请稍候…");
+                boolean linkDown = isDeviceNetworkDisconnected() || networkHealth.isLinkDown();
+                networkWaitTitle.setText(linkDown
+                        ? (isDeviceNetworkDisconnected() ? "网络已断开" : "画面中断，正在持续重连")
+                        : "正在重新连接");
+                long delay = linkDown ? networkWaitDelay(networkWaitAttempt) : 15000L;
+                networkWaitDetail.setText("已重试 " + networkWaitAttempt + " 次 · "
+                        + ((delay + 999L) / 1000L) + " 秒后再试");
+                scheduleNetworkWaitTick(delay);
+                // 重试本身就是探测：每一轮都真去起一次播放，成功出帧就自动收面板。
                 networkWaitRetryOrigin = true;
                 try { startChannel(currentChannelIndex); }
                 finally { networkWaitRetryOrigin = false; }
-                // 网络虽然通了但这路还是接不上，就继续下一轮，绝不放弃。
-                scheduleNetworkWaitTick(15000L);
             }
         };
         channelBar.postDelayed(networkWaitTick, delayMs);
