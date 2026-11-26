@@ -8587,6 +8587,17 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         button.setClickable(true);
         button.setFocusable(true);
         button.setFocusableInTouchMode(true);
+        // 触摸屏上点一个「还没聚焦」的按钮时，View.onTouchEvent 会先把这一下
+        // 用来 requestFocus（focusTaken），然后吞掉 ACTION_UP 的 performClick，
+        // 表现就是“第一下只选中、第二下才生效”。这里在 DOWN 时自己先聚焦，
+        // 让那一下触摸直接算点击；方向键的焦点导航不受影响。
+        button.setOnTouchListener((view, event) -> {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN && !view.isFocused()) {
+                view.requestFocus();
+                AppLog.d(VOICE_OVERLAY_LOG, "touch pre-focus " + ((TextView) view).getText());
+            }
+            return false;
+        });
         return button;
     }
 
