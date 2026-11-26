@@ -8897,12 +8897,17 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             if (channel != null) channelName = channel.name;
         } catch (IllegalStateException ignored) { }
         networkWaitChannelName = channelName;
-        networkWaitAttempt = 0;
-        AppLog.w(TAG, "Network wait started reason=" + reason);
-        hideLoading();
-        showNetworkWaitOverlay();
-        registerNetworkWaitReceiver();
-        scheduleNetworkWaitTick(1000L);
+        boolean waiting = networkWaitOverlay != null
+                && networkWaitOverlay.getVisibility() == View.VISIBLE;
+        if (!waiting) {
+            networkWaitAttempt = 0;
+            AppLog.w(TAG, "Network wait started reason=" + reason);
+            hideLoading();
+            showNetworkWaitOverlay();
+            registerNetworkWaitReceiver();
+        }
+        // 面板已经亮着就不要再重置计数，重试继续由计时器接手。
+        scheduleNetworkWaitTick(waiting ? 15000L : 1000L);
     }
 
     private void showNetworkWaitOverlay() {
