@@ -4360,18 +4360,18 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         ensureFlyMouseOnTop();
     }
 
-    /** 当前焦点是否已经落在浮层里的候选按钮上（而不是浮层容器或网页）。 */
-    private boolean isVoiceSwitchCandidateFocused() {
+    /** 返回浮层里当前获得焦点的候选按钮；没有就返回 null。 */
+    private Button focusedVoiceSwitchCandidate() {
         View focused = getCurrentFocus();
-        if (!(focused instanceof Button)) return false;
+        if (!(focused instanceof Button)) return null;
         View overlay = voiceSwitchOverlay;
-        if (overlay == null) return false;
+        if (overlay == null) return null;
         ViewParent parent = focused.getParent();
         while (parent != null) {
-            if (parent == overlay) return true;
+            if (parent == overlay) return (Button) focused;
             parent = parent.getParent();
         }
-        return false;
+        return null;
     }
 
     private String handleWifiDirect(JSONObject request) throws Exception {
@@ -7465,6 +7465,12 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         super.onWindowFocusChanged(hasFocus);
         if(!hasFocus){cancelChannelConfirm();cancelChannelTouchFavorite();}
         if(hasFocus)applySystemUiVisibility();
+        // 语音/搜索浮层常常是在别的窗口（语音助手、输入法）关闭的瞬间弹出来的，
+        // 那一刻 requestFocus 会落空，等窗口真正拿到焦点后再补一次。
+        if (hasFocus && voiceSwitchOverlay != null && voiceSwitchDefaultButton != null) {
+            final Button target = voiceSwitchDefaultButton;
+            voiceSwitchOverlay.post(target::requestFocus);
+        }
     }
 
     private void applySystemUiVisibility() {
@@ -17758,13 +17764,14 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                 removeVoiceSwitchOverlay();
                 return true;
             }
-            // 焦点还没落到候选按钮上时（浮层刚弹出、或焦点停在网页/浮层容器），
-            // 第一次“确定”直接播放默认候选（也就是第一个），不再被消耗在搬焦点上。
-            if ((keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER)
-                    && !isVoiceSwitchCandidateFocused()) {
-                if (event.getAction() == KeyEvent.ACTION_UP
+            // 浮层打开时“确定”一律自己处理：焦点没落到候选按钮上（刚弹出、
+            // 窗口刚恢复焦点、焦点停在网页）时，这一次就直接播默认候选，
+            // 不再被系统拿去搬焦点、逼用户按第二次。
+            if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN
                         && event.getRepeatCount() == 0) {
-                    Button target = voiceSwitchDefaultButton;
+                    Button target = focusedVoiceSwitchCandidate();
+                    if (target == null) target = voiceSwitchDefaultButton;
                     if (target != null) target.performClick();
                 }
                 return true;
