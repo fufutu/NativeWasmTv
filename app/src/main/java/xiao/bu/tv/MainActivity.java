@@ -8780,9 +8780,9 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         return at > 0 && SystemClock.elapsedRealtime() - at < 120000L;
     }
 
-    /** 真连一次当前线路主机：路由器禁止上网时链路还在，只有 TCP 连接才测得出来。 */
     private interface ProbeCallback { void onResult(boolean reachable); }
 
+    /** 真连一次当前线路主机：路由器禁止上网时链路还在，只有 TCP 连接才测得出来。 */
     private void probeSourceReachable(final ProbeCallback callback) {
         String endpoint = null;
         try {
@@ -8800,7 +8800,10 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             if (port <= 0) {
                 String scheme = uri.getScheme() == null ? ""
                         : uri.getScheme().toLowerCase(java.util.Locale.US);
-                port = scheme.startsWith("https") ? 443 : scheme.startsWith("rtmp") ? 1935 : 80;
+                if (scheme.startsWith("https")) port = 443;
+                else if (scheme.startsWith("rtsp")) port = 554;
+                else if (scheme.startsWith("rtmp")) port = 1935;
+                else port = 80;
             }
         } catch (RuntimeException ignored) { }
         if (host == null || host.length() == 0 || port <= 0
