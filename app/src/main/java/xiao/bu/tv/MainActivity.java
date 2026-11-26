@@ -172,6 +172,8 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         b.putString("dateTime",("ui4".equals(TvUiPlugin.current().id)?tvUiCardDateFormat:tvUiCardTimeFormat).format(new Date()).replace("星期","周"));tvUiChrome.updateCard(b);
     }
     private static final String TAG = "MainActivity";
+    /** 语音/搜索候选浮层的诊断日志，方便用 logcat / api/logs 看清焦点与按键走向。 */
+    private static final String VOICE_OVERLAY_LOG = "VoiceOverlay";
     static final String PREFERENCES = "tv_player";
     // The next catalog changes group/channel ordering substantially. Use a fresh set
     // of keys so indices and snapshots written by the previous catalog are ignored
@@ -4289,6 +4291,8 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                         LinearLayout.LayoutParams.WRAP_CONTENT));
                 button.setOnClickListener(v -> {
                     if (generation != voiceSwitchGeneration) return;
+                    AppLog.d(VOICE_OVERLAY_LOG, "click #" + (index + 1) + " "
+                            + candidate.channelName);
                     removeVoiceSwitchOverlay();
                     switchToVoiceChannel(candidate);
                 });
@@ -4311,8 +4315,12 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             voiceSwitchOverlay = overlay;
             overlay.bringToFront();
             ensureFlyMouseOnTop();
-            if (first != null) first.requestFocus();
+            boolean firstFocus = first != null && first.requestFocus();
             voiceSwitchDefaultButton = first;
+            AppLog.d(VOICE_OVERLAY_LOG, "open candidates=" + candidates.size()
+                    + " windowFocused=" + overlay.hasWindowFocus()
+                    + " requestFocus=" + firstFocus
+                    + " focused=" + describeFocus());
             if (first != null) {
                 final Button focusTarget = first;
                 // 刚 addView 时还没测量布局，requestFocus 可能被静默丢弃；
@@ -4320,7 +4328,10 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                 overlay.post(() -> {
                     if (voiceSwitchOverlay == overlay
                             && voiceSwitchDefaultButton == focusTarget) {
-                        focusTarget.requestFocus();
+                        AppLog.d(VOICE_OVERLAY_LOG, "post-focus request="
+                                + focusTarget.requestFocus()
+                                + " windowFocused=" + overlay.hasWindowFocus()
+                                + " focused=" + describeFocus());
                     }
                 });
             }
@@ -4358,6 +4369,15 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         }
         if (webSourceView != null && webSourceView.isPageVisible()) webSourceView.requestFocus();
         ensureFlyMouseOnTop();
+        AppLog.d(VOICE_OVERLAY_LOG, "close focused=" + describeFocus());
+    }
+
+    /** 诊断用：当前焦点落在哪个视图上（类名 + 文本）。 */
+    private String describeFocus() {
+        View focused = getCurrentFocus();
+        if (focused == null) return "null";
+        CharSequence text = focused instanceof TextView ? ((TextView) focused).getText() : null;
+        return focused.getClass().getSimpleName() + "{" + (text == null ? "" : text) + "}";
     }
 
     /** 返回浮层里当前获得焦点的候选按钮；没有就返回 null。 */
@@ -7469,7 +7489,15 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         // 那一刻 requestFocus 会落空，等窗口真正拿到焦点后再补一次。
         if (hasFocus && voiceSwitchOverlay != null && voiceSwitchDefaultButton != null) {
             final Button target = voiceSwitchDefaultButton;
-            voiceSwitchOverlay.post(target::requestFocus);
+            voiceSwitchOverlay.post(() -> {
+                boolean ok = target.requestFocus();
+                AppLog.d(VOICE_OVERLAY_LOG, "window-focus regain requestFocus=" + ok
+                        + " focused=" + describeFocus());
+            });
+        }
+        if (voiceSwitchOverlay != null) {
+            AppLog.d(VOICE_OVERLAY_LOG, "windowFocusChanged hasFocus=" + hasFocus
+                    + " focused=" + describeFocus());
         }
     }
 
@@ -17759,6 +17787,10 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         }
         if (voiceSwitchOverlay != null) {
             int keyCode = normalizeRemoteKeyCode(event.getKeyCode());
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                AppLog.d(VOICE_OVERLAY_LOG, "key raw=" + event.getKeyCode()
+                        + " -> " + keyCode + " focused=" + describeFocus());
+            }
             if (event.getAction() == KeyEvent.ACTION_DOWN
                     && (keyCode == KeyEvent.KEYCODE_BACK || keyCode == KeyEvent.KEYCODE_MENU)) {
                 removeVoiceSwitchOverlay();
@@ -17768,10 +17800,15 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             // 窗口刚恢复焦点、焦点停在网页）时，这一次就直接播默认候选，
             // 不再被系统拿去搬焦点、逼用户按第二次。
             if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
+                AppLog.d(VOICE_OVERLAY_LOG, "ok-key action=" + event.getAction()
+                        + " repeat=" + event.getRepeatCount()
+                        + " focused=" + describeFocus());
                 if (event.getAction() == KeyEvent.ACTION_DOWN
                         && event.getRepeatCount() == 0) {
                     Button target = focusedVoiceSwitchCandidate();
                     if (target == null) target = voiceSwitchDefaultButton;
+                    String targetText = target == null ? "null" : String.valueOf(target.getText());
+                    AppLog.d(VOICE_OVERLAY_LOG, "ok-key target=" + targetText);
                     if (target != null) target.performClick();
                 }
                 return true;
