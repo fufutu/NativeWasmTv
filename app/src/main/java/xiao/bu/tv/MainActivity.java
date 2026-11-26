@@ -1238,6 +1238,8 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     /** 最近一次判定“网络不可用”的时间戳（elapsedRealtime）。路由器掐网时
      *  ConnectivityManager 仍报已联网，只能靠这个线索配合断网重连。 */
     private volatile long networkFailureHintAtMs;
+    /** 最近一次失败的真正上游主机（从异常文本里抠出来），探测优先用它。 */
+    private volatile String lastUpstreamFailure = "";
     private int missingCodecSoftwareRetryRequestId = -1;
     private volatile int missingHardwareCodecRequestId = -1;
     private volatile String missingHardwareCodecMime = "";
@@ -8731,6 +8733,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         }
         if (returnFromFailedSniffedPlayback(label)) return;
         String message = detail == null ? "" : detail.toLowerCase(java.util.Locale.US);
+        rememberUpstreamTarget(detail);
         boolean disconnected = isDeviceNetworkDisconnected();
         boolean connectLevelFailure = message.contains("unknownhost")
                 || message.contains("unable to resolve host")
@@ -8783,6 +8786,29 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     private interface ProbeCallback { void onResult(boolean reachable); }
 
     /** 真连一次当前线路主机：路由器禁止上网时链路还在，只有 TCP 连接才测得出来。 */
+    /** 从异常文本里抠出“连不上”的真实主机与端口，M3U 源站可达不代表节目源可达。 */
+    private void rememberUpstreamTarget(String detail) {
+        if (detail == null || detail.length() == 0) return;
+        String text = detail.toLowerCase(java.util.Locale.US);
+        String host = null;
+        int port = 0;
+        java.util.regex.Matcher withPort = java.util.regex.Pattern.compile(
+                "failed to connect to ([^/\\s]+)/[^\\s]*?\\(port (\\d+)\\)").matcher(text);
+        if (withPort.find()) {
+            host = withPort.group(1);
+            try { port = Integer.parseInt(withPort.group(2)); } catch (NumberFormatException ignored) { }
+        }
+        if (host == null) {
+            java.util.regex.Matcher plain = java.util.regex.Pattern.compile(
+                    "(?:failed to connect to|unknownhostexception:|unable to resolve host)\\s*([a-z0-9.\\-:]+)")
+                    .matcher(text);
+            if (plain.find()) host = plain.group(1);
+        }
+        if (host == null || host.length() == 0) return;
+        if ("127.0.0.1".equals(host) || "localhost".equals(host) || "::1".equals(host)) return;
+        lastUpstreamFailure = host + ":" + (port > 0 ? port : "");
+    }
+
     private void probeSourceReachable(final ProbeCallback callback) {
         String endpoint = null;
         try {
@@ -8791,6 +8817,13 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         } catch (IllegalStateException ignored) { }
         // 播放地址可能被改成 127.0.0.1 的本地代理，探它没意义；优先探原始线路地址。
         if (endpoint == null || endpoint.length() == 0) endpoint = activePlayerStreamUrl;
+        String upstream = lastUpstreamFailure;
+        if (upstream != null && upstream.length() > 0) {
+            int colon = upstream.lastIndexOf(':');
+            if (colon > 0 && upstream.substring(colon + 1).matches("\\d+")) {
+                endpoint = "tcp://" + upstream.substring(0, colon) + ":" + upstream.substring(colon + 1) + "/";
+            }
+        }
         String host = null;
         int port = 0;
         try {
@@ -9034,6 +9067,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             return;
         }
         networkFailureHintAtMs = 0;
+        lastUpstreamFailure = "";
         if (networkWaitOverlay == null
                 || networkWaitOverlay.getVisibility() != View.VISIBLE) return;
         cancelNetworkWait();
@@ -10746,9 +10780,11 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         releasePlayer(true);
         hideLoading();
         String failureText=(message+" "+(detail==null?"":detail)).toLowerCase(java.util.Locale.US);
-        boolean networkish=failureText.contains("connect")||failureText.contains("timeout")
+        rememberUpstreamTarget(detail);
+        boolean refused=failureText.contains("connection refused")||failureText.contains("econnrefused");
+        boolean networkish=!refused&&(failureText.contains("connect")||failureText.contains("timeout")
                 ||failureText.contains("超时")||failureText.contains("unreachable")
-                ||failureText.contains("enetunreach")||failureText.contains("unknownhost");
+                ||failureText.contains("enetunreach")||failureText.contains("unknownhost"));
         if(!networkish){
             showChannelBar(currentChannel().name,message);
             Toast.makeText(this,message,Toast.LENGTH_LONG).show();
