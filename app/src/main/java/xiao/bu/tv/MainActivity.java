@@ -8928,8 +8928,8 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                     scheduleNetworkWaitTick(delay);
                     return;
                 }
-                networkWaitTitle.setText("网络已恢复");
-                networkWaitDetail.setText("正在重新连接，请稍候…");
+                networkWaitTitle.setText("正在重新连接");
+                networkWaitDetail.setText("正在自动重试，请稍候…");
                 networkWaitRetryOrigin = true;
                 try { startChannel(currentChannelIndex); }
                 finally { networkWaitRetryOrigin = false; }
@@ -8986,8 +8986,8 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                 // 网络一恢复立刻重连，不用等退避计时走完。
                 AppLog.i(TAG, "Network restored while waiting; retrying immediately");
                 cancelNetworkWaitTick();
-                networkWaitTitle.setText("网络已恢复");
-                networkWaitDetail.setText("正在重新连接，请稍候…");
+                networkWaitTitle.setText("正在重新连接");
+                networkWaitDetail.setText("正在自动重试，请稍候…");
                 networkWaitRetryOrigin = true;
                 try { startChannel(currentChannelIndex); }
                 finally { networkWaitRetryOrigin = false; }
