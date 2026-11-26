@@ -13315,6 +13315,30 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             beginNetworkWaitAndRetry(decoderFailure ? "解码器恢复失败" : "播放中断");
             return;
         }
+        // 路由器掐网时系统仍报“已联网”，只有真连一次线路主机才知道到底断没断。
+        // 探不通就不要再走换线路/跳台流程，直接转成一直重连。
+        final int probeRequestId = playRequestId;
+        final boolean probeDecoderFailure = decoderFailure;
+        final boolean probeLegacyHlsFailure = legacyHlsFailure;
+        final Channel probeQuickChannel = quickChannel;
+        final String probeReason = reason;
+        probeSourceReachable(reachable -> {
+            if (probeRequestId != playRequestId || isFinishing()) return;
+            if (!reachable) {
+                markNetworkFailure();
+                abortChannelSwitchAnimation();
+                beginNetworkWaitAndRetry(probeDecoderFailure ? "解码器恢复失败" : "播放中断");
+                return;
+            }
+            finishStalledRecoveryFallback(probeReason, probeDecoderFailure,
+                    probeLegacyHlsFailure, probeQuickChannel);
+        });
+        return;
+    }
+
+    /** 探测确认网络没问题后，才继续原来的换线路/跳台兜底流程。 */
+    private void finishStalledRecoveryFallback(String reason, boolean decoderFailure,
+            boolean legacyHlsFailure, Channel quickChannel) {
         Channel channel = currentChannel();
         if (decoderFailure || legacyHlsFailure || quickChannel != null) {
             // A decoder failure is not proof that this channel/source is dead.
