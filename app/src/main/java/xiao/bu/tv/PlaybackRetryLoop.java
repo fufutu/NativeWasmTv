@@ -28,10 +28,13 @@ final class PlaybackRetryLoop {
     private static final long MAX_DELAY_MS = 30000L;
     /** 同一次尝试里重复回调的合并窗口。 */
     private static final long DUPLICATE_WINDOW_MS = 1000L;
+    /** 一次尝试的最长等待：子步骤卡死也不会让循环永远停住。 */
+    private static final long ATTEMPT_TIMEOUT_MS = 60000L;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable retryTask = this::fireRetry;
     private final Runnable failureTask = this::handleFailure;
+    private final Runnable timeoutTask = this::handleAttemptTimeout;
     private Listener listener;
     private int attempt;
     private long lastFailureAtMs = Long.MIN_VALUE / 2;
@@ -71,6 +74,7 @@ final class PlaybackRetryLoop {
             listener.onWaiting(attempt, delay);
         }
         handler.removeCallbacks(retryTask);
+        handler.removeCallbacks(timeoutTask);
         handler.postDelayed(retryTask, delay);
     }
 
@@ -82,6 +86,7 @@ final class PlaybackRetryLoop {
         attempt = 0;
         waiting = false;
         handler.removeCallbacks(retryTask);
+        handler.removeCallbacks(timeoutTask);
         if (listener != null) {
             listener.onRecovered();
         }
@@ -92,6 +97,7 @@ final class PlaybackRetryLoop {
         waiting = false;
         handler.removeCallbacks(retryTask);
         handler.removeCallbacks(failureTask);
+        handler.removeCallbacks(timeoutTask);
     }
 
     private void fireRetry() {
@@ -99,6 +105,18 @@ final class PlaybackRetryLoop {
             return;
         }
         listener.onRetryDue();
+        // 这一轮要是既不成功也不报错（某个子步骤静默死掉），到点当失败处理。
+        handler.removeCallbacks(timeoutTask);
+        handler.postDelayed(timeoutTask, ATTEMPT_TIMEOUT_MS);
+    }
+
+    private void handleAttemptTimeout() {
+        if (!waiting) {
+            return;
+        }
+        AppLog.w("PlaybackRetry", "attempt " + attempt + " gave no result in "
+                + ATTEMPT_TIMEOUT_MS + "ms, retrying");
+        handleFailure();
     }
 
     private void runOnMain(Runnable task) {

@@ -8307,30 +8307,16 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
                             pendingPluginTimingMs = 0;
                             abortChannelSwitchAnimation();
                             hideLoading();
-                            if (isDeviceNetworkDisconnected()) {
-                                showChannelBar(currentChannel().name,
-                                        "未连接网络，请连接网络后重试");
-                                Toast.makeText(MainActivity.this,
-                                        "未连接网络，请连接网络后重试",
-                                        Toast.LENGTH_LONG).show();
-                                return;
-                            }
-                            String reason = error.getMessage();
-                            if (isPluginDownloadNetworkError(error)) {
-                                showChannelBar(currentChannel().name,
-                                        "暂时无法下载兼容插件，请检查网络或稍后重试");
-                                Toast.makeText(MainActivity.this,
-                                        "暂时无法下载兼容插件，请检查网络或稍后重试",
-                                        Toast.LENGTH_LONG).show();
-                                return;
-                            }
-                            showChannelBar(currentChannel().name,
-                                    "兼容插件安装失败" + (reason == null ? "" : "：" + reason));
+                            // 插件装不上也是“这一路起不来”：回唯一入口，交给重试循环。
+                            recordLoadError("兼容插件安装失败", error.getMessage());
                             return;
                         }
                         AppLog.i(TAG, "CJS plugin activated version=" + version);
                         pendingPluginTimingMs = Math.max(0, SystemClock.elapsedRealtime() - pendingPluginTimingStart);
-                        startChannel(currentChannelIndex);
+                        // 插件就绪后继续这一轮重试，别把等候面板拆掉。
+                        networkWaitRetryOrigin = true;
+                        try { startChannel(currentChannelIndex); }
+                        finally { networkWaitRetryOrigin = false; }
                     }
                 });
             }
@@ -8774,6 +8760,8 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
     private void retryPlaybackAttempt() {
         if (isFinishing()) return;
         hideLoading();
+        // 每次重试都是从“进入频道”重新走一遍，恢复流程的计数要归零。
+        playbackRecoveryAttempts = 0;
         networkWaitRetryOrigin = true;
         try { startChannel(currentChannelIndex); }
         finally { networkWaitRetryOrigin = false; }
