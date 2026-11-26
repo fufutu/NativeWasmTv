@@ -8763,7 +8763,8 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
         // 每次重试都是从“进入频道”重新走一遍，恢复流程的计数要归零。
         playbackRecoveryAttempts = 0;
         networkWaitRetryOrigin = true;
-        try { startChannel(currentChannelIndex); }
+        // 从头走一遍：地址也重新解析，避免一直复用同一个过期线路。
+        try { startChannel(currentChannelIndex, null, null, true); }
         finally { networkWaitRetryOrigin = false; }
     }
 
@@ -13190,6 +13191,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
 
     /** Re-enter the configured endpoint: redirect/CDN signatures can expire while watching. */
     private boolean refreshContinuousHttpPlayback(int requestId, String reason) {
+        if (retryLoop.isWaiting()) return false;
         if (requestId != playRequestId || continuousHttpSourceRequestId != requestId
                 || catchupProgram != null || quickChannel != null || seekableDuration() > 0L)
             return false;
@@ -13263,6 +13265,7 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
 
     /** A signed live URL needs a new resolver session, not a reconnect to its old proxy. */
     private boolean refreshYangshipinPlayback(int requestId, String reason) {
+        if (retryLoop.isWaiting()) return false;
         if (requestId != playRequestId || catchupProgram != null || quickChannel != null)
             return false;
         Channel channel = currentChannel();
@@ -13280,7 +13283,8 @@ public final class MainActivity extends Activity implements TvUiPlugin.Listener,
             releasePlayer(true);
             abortChannelSwitchAnimation();
             hideLoading();
-            showChannelBar(channel.name, "央视频线路刷新失败，请重试或切换线路");
+            // 刷新耗尽了，也回唯一入口，由重试循环继续。
+            recordLoadError("央视频线路刷新失败", reason);
             return true;
         }
         playbackRecoveryAttempts++;
